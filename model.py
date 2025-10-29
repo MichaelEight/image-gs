@@ -1,3 +1,4 @@
+import csv
 import logging
 import math
 import os
@@ -402,6 +403,19 @@ class GaussianSplatting2D(nn.Module):
         self.render_time_accum, self.total_time_accum = 0.0, 0.0
         self.lpips_final, self.flip_final, self.msssim_final = 1.0, 1.0, 0.0
 
+        # Initialize CSV file for metric logging
+        self.metrics_csv_path = os.path.join(self.log_dir, "metrics.csv")
+        self.metrics_csv_file = open(self.metrics_csv_path, 'w', newline='')
+        self.metrics_csv_writer = csv.writer(self.metrics_csv_file)
+
+        # Write CSV header
+        self.metrics_csv_writer.writerow([
+            'step', 'total_loss', 'l1_loss', 'l2_loss', 'ssim_loss',
+            'psnr', 'ssim', 'num_gaussians', 'num_bytes',
+            'render_time_accum', 'total_time_accum'
+        ])
+        self.metrics_csv_file.flush()
+
         self.step = 0
         with torch.no_grad():
             self._log_images(log_final=False, plot_gaussians=self.vis_gaussians)
@@ -422,6 +436,21 @@ class GaussianSplatting2D(nn.Module):
             with torch.no_grad():
                 if self.step % self.eval_steps == 0:
                     self._evaluate(log=True, upsample=False)
+                    # Log metrics to CSV
+                    self.metrics_csv_writer.writerow([
+                        self.step,
+                        self.total_loss.item() if self.total_loss is not None else '',
+                        self.l1_loss.item() if self.l1_loss is not None else '',
+                        self.l2_loss.item() if self.l2_loss is not None else '',
+                        self.ssim_loss.item() if self.ssim_loss is not None else '',
+                        self.psnr_curr,
+                        self.ssim_curr,
+                        self.num_gaussians,
+                        self.num_bytes,
+                        self.render_time_accum,
+                        self.total_time_accum
+                    ])
+                    self.metrics_csv_file.flush()
                     if not self.disable_lr_schedule and self.num_gaussians == self.total_num_gaussians:
                         terminate = self._lr_schedule()
                 if self.step % self.save_image_steps == 0:
@@ -435,6 +464,11 @@ class GaussianSplatting2D(nn.Module):
         with torch.no_grad():
             self._log_images(log_final=True, plot_gaussians=self.vis_gaussians)
             self._save_model()
+
+        # Close CSV file
+        self.metrics_csv_file.close()
+        self.worklog.info(f"Metrics saved to: {self.metrics_csv_path}")
+
         self.worklog.info("Optimization completed")
         self.worklog.info("***********************************************")
         self.worklog.info(f"Mean scale: {self._get_scale().mean().item():.4f} (pixel) | {self.scale.mean().item():.4f} (raw)")

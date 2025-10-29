@@ -16,7 +16,7 @@ def _load_training_results(output_folder: str) -> Dict[str, Any]:
     Load training results and parse configuration.
 
     Args:
-        output_folder: Output folder name
+        output_folder: Output folder reference (e.g., "session_1/cat-1000-2000")
 
     Returns:
         Dictionary containing loaded results and metadata
@@ -27,14 +27,17 @@ def _load_training_results(output_folder: str) -> Dict[str, Any]:
     if not os.path.exists(output_path):
         raise FileNotFoundError(f"Output folder not found: {output_path}")
 
-    # Parse config from folder name
-    parts = output_folder.rsplit("-", 3)
+    # Parse config from folder name (just the last part after session_N/)
+    folder_name = os.path.basename(output_folder)
+
+    # Parse format: name-gaussians-steps (no timestamp)
+    parts = folder_name.rsplit("-", 2)
     if len(parts) >= 3:
         base_name = parts[0]
         num_gaussians = int(parts[1])
         max_steps = int(parts[2])
     else:
-        base_name = output_folder
+        base_name = folder_name
         num_gaussians = "?"
         max_steps = "?"
 

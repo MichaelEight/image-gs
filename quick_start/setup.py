@@ -75,8 +75,27 @@ def install_python_deps() -> None:
 
 
 def clone_repository() -> None:
-    """Clone the Image-GS repository."""
+    """
+    Clone the Image-GS repository (if needed).
+
+    Auto-detects if we're already inside the repository and skips cloning.
+    """
     ROOT_WORKSPACE = os.getcwd()
+
+    # Check if we're already in the image-gs repository
+    # Look for marker files that indicate we're in the repo
+    is_in_repo = (
+        os.path.exists(os.path.join(ROOT_WORKSPACE, "main.py")) and
+        os.path.exists(os.path.join(ROOT_WORKSPACE, "model.py")) and
+        os.path.exists(os.path.join(ROOT_WORKSPACE, "quick_start"))
+    )
+
+    if is_in_repo:
+        print("✓ Already in image-gs repository, skipping clone")
+        print(f"✓ Repository: {ROOT_WORKSPACE}")
+        return
+
+    # Not in repo, check if image-gs/ subdirectory exists
     REPO_DIR = os.path.join(ROOT_WORKSPACE, "image-gs")
 
     if os.path.exists(REPO_DIR):
@@ -87,7 +106,6 @@ def clone_repository() -> None:
     else:
         print(f"Cloning repository to {REPO_DIR}...\n")
         subprocess.run(["git", "clone", "https://github.com/MichaelEight/image-gs", REPO_DIR])
-        # subprocess.run(["git", "clone", "https://github.com/NYU-ICL/image-gs.git", REPO_DIR]) # ORIGINAL
 
     print(f"\n✓ Repository: {REPO_DIR}")
 

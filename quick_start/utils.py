@@ -8,11 +8,17 @@ def get_paths() -> Tuple[str, str, str, str]:
     """
     Get workspace paths for the Image-GS project.
 
+    Assumes we are already inside the image-gs repository directory.
+
     Returns:
         Tuple of (ROOT_WORKSPACE, REPO_DIR, INPUT_DIR, OUTPUT_DIR)
+        - ROOT_WORKSPACE: Current directory (should be image-gs/)
+        - REPO_DIR: Same as ROOT_WORKSPACE (we ARE the repo)
+        - INPUT_DIR: image-gs/input/
+        - OUTPUT_DIR: image-gs/output/
     """
     ROOT_WORKSPACE = os.getcwd()
-    REPO_DIR = os.path.join(ROOT_WORKSPACE, "image-gs")
+    REPO_DIR = ROOT_WORKSPACE  # We are already in the repository
     INPUT_DIR = os.path.join(ROOT_WORKSPACE, "input")
     OUTPUT_DIR = os.path.join(ROOT_WORKSPACE, "output")
 

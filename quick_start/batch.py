@@ -13,7 +13,7 @@ def _collect_batch_metrics(output_folders: List[str]) -> List[Dict[str, Any]]:
     Collect metrics from all batch training results.
 
     Args:
-        output_folders: List of output folder names
+        output_folders: List of output folder references (e.g., ["session_1/cat-1000-2000", ...])
 
     Returns:
         List of dictionaries containing metrics for each run
@@ -25,8 +25,11 @@ def _collect_batch_metrics(output_folders: List[str]) -> List[Dict[str, Any]]:
     for folder in output_folders:
         output_path = os.path.join(OUTPUT_DIR, folder)
 
-        # Parse config
-        parts = folder.rsplit("-", 3)
+        # Parse config from folder name (just the last part after session_N/)
+        folder_name = os.path.basename(folder)
+
+        # Parse format: name-gaussians-steps (no timestamp)
+        parts = folder_name.rsplit("-", 2)
         if len(parts) < 3:
             continue
 

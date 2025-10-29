@@ -5,36 +5,14 @@ import sys
 import shutil
 import glob
 import itertools
+from datetime import datetime
 from typing import List, Optional, Tuple
 
 from .config import TrainingConfig
 from .utils import get_paths
 
 
-def _create_session_folder() -> Tuple[str, str]:
-    """
-    Create a new session folder for training outputs.
-
-    Finds the next available session number (session_1, session_2, etc.)
-
-    Returns:
-        Tuple of (session_name, session_path)
-    """
-    _, _, _, OUTPUT_DIR = get_paths()
-
-    # Find next available session number
-    session_num = 1
-    while True:
-        session_name = f"session_{session_num}"
-        session_path = os.path.join(OUTPUT_DIR, session_name)
-        if not os.path.exists(session_path):
-            os.makedirs(session_path, exist_ok=True)
-            return session_name, session_path
-        session_num += 1
-
-
 def _setup_training_environment(
-    session_path: str,
     input_filename: str,
     num_gaussians: int,
     max_steps: int,
@@ -45,11 +23,10 @@ def _setup_training_environment(
     Setup training environment: validate input, create directories, copy files.
 
     Args:
-        session_path: Path to session folder
         input_filename: Input image filename
         num_gaussians: Number of Gaussians
         max_steps: Maximum training steps
-        init_gaussian_file: Path to initial Gaussian file relative to repo root
+        init_gaussian_file: Path to initial Gaussian file relative to workspace
         allow_partial: Allow partial initialization
 
     Returns:
@@ -74,10 +51,11 @@ def _setup_training_environment(
         if not init_source_path.endswith('.pt'):
             raise ValueError(f"Initial Gaussian file must be a .pt file: {init_source_path}")
 
-    # Create output folder (no timestamp)
+    # Create timestamped output folder
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = os.path.splitext(input_filename)[0]
-    output_folder = f"{base_name}-{num_gaussians}-{max_steps}"
-    output_path = os.path.join(session_path, output_folder)
+    output_folder = f"{base_name}-{num_gaussians}-{max_steps}-{timestamp}"
+    output_path = os.path.join(OUTPUT_DIR, output_folder)
 
     os.makedirs(output_path, exist_ok=True)
     os.makedirs(os.path.join(output_path, "other"), exist_ok=True)
@@ -170,6 +148,8 @@ def _run_training(
         init_checkpoint_path: Path to initial checkpoint
         allow_partial: Allow partial initialization
     """
+    ROOT_WORKSPACE, _, _, _ = get_paths()
+
     print("=" * 80)
     print(f"🚀 TRAINING: {input_filename}")
     print("=" * 80)
@@ -182,7 +162,7 @@ def _run_training(
         print(f"Partial:     {allow_partial}")
     else:
         print(f"Init from:   Default (random)")
-    print(f"Output:      {output_folder}/")
+    print(f"Output:      output/{output_folder}/")
     print(f"Time est:    ~{max_steps * 0.002:.1f}-{max_steps * 0.005:.1f} minutes")
     print("=" * 80)
     print()
@@ -193,7 +173,7 @@ def _run_training(
     print("=" * 80)
     print("✅ TRAINING COMPLETE")
     print("=" * 80)
-    print(f"📁 Output folder: {output_folder}/")
+    print(f"📁 Output folder: output/{output_folder}/")
     print()
 
 
@@ -209,24 +189,16 @@ def _organize_training_outputs(output_folder: str, output_path: str) -> None:
 
     temp_exp_name = f"temp/{output_folder}"
     result_base = os.path.join(REPO_DIR, "results", temp_exp_name)
-
-    if not os.path.exists(result_base):
-        raise FileNotFoundError(f"Results directory not found: {result_base}")
-
     run_dirs = [d for d in os.listdir(result_base) if os.path.isdir(os.path.join(result_base, d))]
-    if not run_dirs:
-        raise FileNotFoundError(f"No run directories found in: {result_base}")
-
     latest_run = sorted(run_dirs)[-1]
     result_dir = os.path.join(result_base, latest_run)
 
     # 1. Model checkpoint
     ckpt_dir = os.path.join(result_dir, "checkpoints")
-    if os.path.exists(ckpt_dir):
-        ckpt_files = glob.glob(os.path.join(ckpt_dir, "ckpt_step-*.pt"))
-        if ckpt_files:
-            latest_ckpt = sorted(ckpt_files)[-1]
-            shutil.copy2(latest_ckpt, os.path.join(output_path, "model.pt"))
+    ckpt_files = glob.glob(os.path.join(ckpt_dir, "ckpt_step-*.pt"))
+    if ckpt_files:
+        latest_ckpt = sorted(ckpt_files)[-1]
+        shutil.copy2(latest_ckpt, os.path.join(output_path, "model.pt"))
 
     # 2. Rendered image
     renders = glob.glob(os.path.join(result_dir, "render_res-*.jpg"))
@@ -258,7 +230,6 @@ def _organize_training_outputs(output_folder: str, output_path: str) -> None:
 
 
 def train_single(
-    session_path: str,
     input_filename: str,
     num_gaussians: int,
     max_steps: int,
@@ -270,19 +241,18 @@ def train_single(
     Train a single Image-GS model.
 
     Args:
-        session_path: Path to session folder
         input_filename: Input image filename (from input/ directory)
         num_gaussians: Number of Gaussians
         max_steps: Training steps
         use_progressive: Enable progressive optimization
-        init_gaussian_file: Path to initial Gaussian file relative to repo root
+        init_gaussian_file: Path to initial Gaussian file relative to workspace
         allow_partial: Allow partial initialization
 
     Returns:
-        Output folder name (e.g., "cat-5000-3500")
+        Output folder name (e.g., "cat-5000-3500-20251027_143052")
     """
     output_folder, output_path, init_checkpoint_path = _setup_training_environment(
-        session_path, input_filename, num_gaussians, max_steps, init_gaussian_file, allow_partial
+        input_filename, num_gaussians, max_steps, init_gaussian_file, allow_partial
     )
     cmd = _build_training_command(
         input_filename, output_folder, num_gaussians, max_steps, use_progressive,
@@ -301,47 +271,28 @@ def train(config: TrainingConfig) -> List[str]:
     """
     Train Image-GS models with batch support.
 
-    This function trains all combinations of images × Gaussians × Steps
-    specified in the config. All results are saved in a single session folder.
+    This function trains all combinations of Gaussians × Steps specified in the config.
 
     Args:
         config: Training configuration object
 
     Returns:
-        List of output folder names (relative to session folder)
+        List of output folder names
 
     Example:
         >>> config = set_config(
-        ...     input_filenames=["cat.png", "dog.png"],
-        ...     gaussians=[1000, 5000],
-        ...     steps=[2000, 3500]
+        ...     input_filename="cat.png",
+        ...     gaussians=[5000, 10000],
+        ...     steps=[3500, 5000]
         ... )
-        >>> results = train(config)  # Trains 8 models (2×2×2)
-        >>> # Results in output/session_N/:
-        >>> #   cat-1000-2000/
-        >>> #   cat-1000-3500/
-        >>> #   cat-5000-2000/
-        >>> #   cat-5000-3500/
-        >>> #   dog-1000-2000/
-        >>> #   dog-1000-3500/
-        >>> #   dog-5000-2000/
-        >>> #   dog-5000-3500/
+        >>> results = train(config)  # Trains 4 models (2 × 2)
     """
-    # Create session folder
-    session_name, session_path = _create_session_folder()
-
-    # Generate all combinations: images × gaussians × steps
-    combinations = list(itertools.product(config.input_filenames, config.gaussians, config.steps))
+    # Generate all combinations
+    combinations = list(itertools.product(config.gaussians, config.steps))
     total_combinations = len(combinations)
 
     print("=" * 80)
-    print(f"BATCH TRAINING SESSION: {session_name}")
-    print("=" * 80)
-    print(f"Images:      {len(config.input_filenames)} ({', '.join(config.input_filenames)})")
-    print(f"Gaussians:   {config.gaussians}")
-    print(f"Steps:       {config.steps}")
-    print(f"Total runs:  {total_combinations} ({len(config.input_filenames)}×{len(config.gaussians)}×{len(config.steps)})")
-    print(f"Session:     {session_name}")
+    print(f"BATCH TRAINING: {total_combinations} combination(s)")
     print("=" * 80)
     print()
 
@@ -349,38 +300,39 @@ def train(config: TrainingConfig) -> List[str]:
     output_folders = []
 
     # Train each combination
-    for idx, (input_filename, num_gaussians, max_steps) in enumerate(combinations, 1):
+    for idx, (num_gaussians, max_steps) in enumerate(combinations, 1):
         print(f"{'═' * 80}")
         print(f"TRAINING {idx}/{total_combinations}")
         print(f"{'═' * 80}")
-        print(f"Image: {input_filename}, Gaussians: {num_gaussians}, Steps: {max_steps}")
+        print(f"Parameters: Gaussians={num_gaussians}, Steps={max_steps}")
         print()
 
         # Train
+        start_time = datetime.now()
         output_folder = train_single(
-            session_path=session_path,
-            input_filename=input_filename,
+            input_filename=config.input_filename,
             num_gaussians=num_gaussians,
             max_steps=max_steps,
             use_progressive=config.use_progressive,
             init_gaussian_file=config.init_gaussian_file,
             allow_partial=config.allow_partial
         )
+        end_time = datetime.now()
+        elapsed = (end_time - start_time).total_seconds() / 60
 
-        # Store as session_name/folder_name for easy reference
-        full_output_ref = f"{session_name}/{output_folder}"
-        output_folders.append(full_output_ref)
+        output_folders.append(output_folder)
 
-        print(f"📁 Output: {full_output_ref}")
+        print(f"⏱️  Elapsed time: {elapsed:.2f} minutes")
+        print(f"📁 Output: {output_folder}")
         print()
 
     print("=" * 80)
     print("✅ ALL TRAINING COMPLETE")
     print("=" * 80)
-    print(f"Session:    {session_name}")
-    print(f"Total runs: {total_combinations}")
+    print(f"Total runs:     {total_combinations}")
+    print(f"Output folders: {len(output_folders)}")
     print()
-    print("Output folders:")
+    print("Output folders list:")
     for i, folder in enumerate(output_folders, 1):
         print(f"  {i}. {folder}")
     print("=" * 80)

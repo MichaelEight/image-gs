@@ -35,6 +35,9 @@ ckpt_file:             ""
 disable_color_init:    False
 init_mode:             "gradient" # Gaussian position initialization mode, valid values include "gradient", "saliency", and "random"
 init_random_ratio:     0.3 # Ratio of Gaussians with randomly initialized position
+init_from_checkpoint:  False # Load pretrained Gaussians from checkpoint for initialization
+init_checkpoint_path:  "" # Path to checkpoint file for initialization
+init_partial:          False # Allow partial loading when Gaussian counts don't match
 smap_filter_size:      20 # Gaussian filter size for smoothing saliency maps
 # Loss functions
 l1_loss_ratio:         1.0

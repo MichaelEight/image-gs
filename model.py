@@ -59,6 +59,8 @@ class GaussianSplatting2D(nn.Module):
         if self.evaluate:
             self.ckpt_file = args.ckpt_file
             self._load_model()
+        elif args.init_from_checkpoint:
+            self._load_pretrained_gaussians(args)
         else:
             self._init_pos_scale_feat(args)
 
@@ -284,6 +286,113 @@ class GaussianSplatting2D(nn.Module):
         self.start_step = checkpoint["step"]+1
         self.worklog.info(f"Checkpoint '{ckpt_path}' successfully loaded")
         self.worklog.info("***********************************************")
+
+    def _load_pretrained_gaussians(self, args):
+        """Load pretrained Gaussians from checkpoint file for initialization."""
+        ckpt_path = args.init_checkpoint_path
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: '{ckpt_path}'")
+
+        self.worklog.info(f"Loading pretrained Gaussians from '{ckpt_path}'")
+        checkpoint = torch.load(ckpt_path, weights_only=False)
+        pretrained_state = checkpoint['state_dict']
+
+        # Get number of Gaussians in checkpoint
+        pretrained_num_gaussians = pretrained_state['xy'].shape[0]
+
+        with torch.no_grad():
+            if pretrained_num_gaussians != self.num_gaussians:
+                if args.init_partial:
+                    # Partial loading: load what fits, initialize remaining
+                    num_to_load = min(pretrained_num_gaussians, self.num_gaussians)
+                    self.worklog.info(f"Partial initialization: loading {num_to_load} of {pretrained_num_gaussians} Gaussians")
+
+                    # Copy pretrained Gaussians
+                    self.xy[:num_to_load].copy_(pretrained_state['xy'][:num_to_load])
+                    self.scale[:num_to_load].copy_(pretrained_state['scale'][:num_to_load])
+                    self.rot[:num_to_load].copy_(pretrained_state['rot'][:num_to_load])
+                    self.feat[:num_to_load].copy_(pretrained_state['feat'][:num_to_load])
+
+                    # Initialize remaining Gaussians if needed
+                    if self.num_gaussians > pretrained_num_gaussians:
+                        self.worklog.info(f"Initializing remaining {self.num_gaussians - num_to_load} Gaussians")
+                        self._init_pos_scale_feat_range(args, num_to_load, self.num_gaussians)
+                else:
+                    # Strict matching: raise error if sizes don't match
+                    raise ValueError(
+                        f"Checkpoint has {pretrained_num_gaussians} Gaussians but model expects {self.num_gaussians}. "
+                        f"Set init_partial=True to allow partial initialization."
+                    )
+            else:
+                # Exact match: load all Gaussians
+                self.xy.copy_(pretrained_state['xy'])
+                self.scale.copy_(pretrained_state['scale'])
+                self.rot.copy_(pretrained_state['rot'])
+                self.feat.copy_(pretrained_state['feat'])
+                self.worklog.info(f"Loaded all {pretrained_num_gaussians} Gaussians")
+
+        self.worklog.info("Pretrained Gaussians successfully loaded")
+        self.worklog.info("***********************************************")
+
+    def _init_pos_scale_feat_range(self, args, start_idx, end_idx):
+        """Initialize positions, scales, and features for a range of Gaussians."""
+        self.init_mode = args.init_mode
+        self.init_random_ratio = args.init_random_ratio
+
+        if not hasattr(self, 'pixel_xy'):
+            self.pixel_xy = get_grid(h=self.img_h, w=self.img_w).to(dtype=self.dtype, device=self.device).reshape(-1, 2)
+
+        num_to_init = end_idx - start_idx
+
+        with torch.no_grad():
+            # Position
+            if self.init_mode == 'gradient':
+                if not hasattr(self, 'image_gradients'):
+                    self._compute_gmap()
+                # Sample positions for the range
+                sampled_pos = self._sample_pos_n(prob=self.image_gradients, n=num_to_init)
+                self.xy[start_idx:end_idx].copy_(sampled_pos)
+            elif self.init_mode == 'saliency':
+                self.smap_filter_size = args.smap_filter_size
+                if not hasattr(self, 'saliency'):
+                    self._compute_smap(path="models")
+                sampled_pos = self._sample_pos_n(prob=self.saliency, n=num_to_init)
+                self.xy[start_idx:end_idx].copy_(sampled_pos)
+            else:
+                # Random sampling
+                selected = np.random.choice(self.num_pixels, num_to_init, replace=False, p=None)
+                self.xy[start_idx:end_idx].copy_(self.pixel_xy.detach().clone()[selected])
+
+            # Scale
+            scale_value = self.init_scale if self.disable_inverse_scale else 1.0/self.init_scale
+            self.scale[start_idx:end_idx].fill_(scale_value)
+
+            # Feature
+            if not self.disable_color_init:
+                self.feat[start_idx:end_idx].copy_(
+                    self._get_target_features(positions=self.xy[start_idx:end_idx]).detach().clone()
+                )
+
+    def _sample_pos_n(self, prob, n):
+        """Sample n positions based on probability distribution."""
+        prob_normalized = prob / prob.sum()
+        selected = np.random.choice(
+            self.num_pixels,
+            n,
+            replace=False,
+            p=prob_normalized.cpu().numpy()
+        )
+        selected_random = np.random.choice(
+            self.num_pixels,
+            n,
+            replace=False,
+            p=None
+        )
+        selected_flag = torch.rand(n) < self.init_random_ratio
+        selected_tensor = torch.from_numpy(selected).to(device=self.device)
+        selected_random_tensor = torch.from_numpy(selected_random).to(device=self.device)
+        selected_final = torch.where(selected_flag, selected_random_tensor, selected_tensor)
+        return self.pixel_xy[selected_final].detach().clone()
 
     def _save_model(self):
         if self.quantize:

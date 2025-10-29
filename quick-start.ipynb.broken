@@ -1,0 +1,160 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "# Image-GS Quick Start\n\nMinimal setup for training 2D Gaussian Splatting models.\n\n## Setup Instructions\n\n1. **Clone the repository** (in terminal):\n   ```bash\n   git clone https://github.com/MichaelEight/image-gs\n   cd image-gs\n   ```\n\n2. **Open this notebook** in Jupyter\n\n3. **Add your images** to the `input/` directory\n\n4. **Run the cells below** to train your models\n\n## Directory Structure\n```\nimage-gs/\n├── quick-start.ipynb  (this notebook)\n├── input/            (your images)\n│   ├── cat.png\n│   └── dog.png\n├── output/           (results)\n│   ├── session_1/    (first training run)\n│   │   ├── cat-1000-2000/\n│   │   └── dog-1000-2000/\n│   └── session_2/    (second training run)\n│       └── ...\n└── ...\n```"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 0: Bootstrap (Install Basic Dependencies)\n\nInstall packages needed by the quick_start module before we can import it."
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Bootstrap: Install packages needed by quick_start module\n",
+    "import sys\n",
+    "import subprocess\n",
+    "\n",
+    "print(\"Installing quick_start dependencies...\")\n",
+    "\n",
+    "packages = [\n",
+    "    \"numpy\",\n",
+    "    \"pandas\",\n",
+    "    \"matplotlib\",\n",
+    "    \"pillow\",  # PIL\n",
+    "]\n",
+    "\n",
+    "for pkg in packages:\n",
+    "    subprocess.run([sys.executable, \"-m\", \"pip\", \"install\", pkg, \"-q\"],\n",
+    "                    capture_output=True)\n",
+    "\n",
+    "print(\"✓ Quick start dependencies installed\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from quick_start import setup\n",
+    "\n",
+    "setup()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 1: Setup\n\nInstall all dependencies and verify installation.\n\n**Note:** This step takes 5-10 minutes. Run once per environment."
+  },
+  {
+   "cell_type": "markdown",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "## Step 2: Verify Setup (Optional)\n\nVerify installation without reinstalling."
+  },
+  {
+   "cell_type": "markdown",
+   "source": "## Step 3: Configuration\n\nConfigure training parameters.\n\n### Parameters:\n- **input_filenames**: Single filename or list (e.g., `\"cat.png\"` or `[\"cat.png\", \"dog.png\"]`)\n- **gaussians**: List of Gaussian counts (e.g., `[1000, 5000]`)\n- **steps**: List of training steps (e.g., `[2000, 3500]`)\n- **use_progressive**: Enable progressive optimization (recommended: `True`)\n- **init_gaussian_file**: Path to initial checkpoint (optional, e.g., `\"output/session_1/cat-5000-3500/model.pt\"`)\n- **allow_partial**: Allow partial initialization (optional)\n\n### Multi-Image & Batch Training:\nAll combinations of `images × gaussians × steps` will be trained.\n\n**Example:** `input_filenames=[\"a.png\", \"b.png\"]`, `gaussians=[1000, 5000]`, `steps=[2000]`\n- Trains **4 models**: a-1000-2000, a-5000-2000, b-1000-2000, b-5000-2000\n- Results saved in `output/session_N/`",
+   "metadata": {},
+   "execution_count": null,
+   "outputs": []
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 4: Configuration\n\nConfigure training parameters.\n\n### Parameters:\n- **input_filenames**: Single filename or list (e.g., `\"cat.png\"` or `[\"cat.png\", \"dog.png\"]`)\n- **gaussians**: List of Gaussian counts (e.g., `[1000, 5000]`)\n- **steps**: List of training steps (e.g., `[2000, 3500]`)\n- **use_progressive**: Enable progressive optimization (recommended: `True`)\n- **init_gaussian_file**: Path to initial checkpoint (optional, e.g., `\"output/session_1/cat-5000-3500/model.pt\"`)\n- **allow_partial**: Allow partial initialization (optional)\n\n### Multi-Image & Batch Training:\nAll combinations of `images × gaussians × steps` will be trained.\n\n**Example:** `input_filenames=[\"a.png\", \"b.png\"]`, `gaussians=[1000, 5000]`, `steps=[2000]`\n- Trains **4 models**: a-1000-2000, a-5000-2000, b-1000-2000, b-5000-2000\n- Results saved in `output/session_N/`"
+  },
+  {
+   "cell_type": "markdown",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "## Step 4: Training\n\nTrain models and save results to a new session folder.\n\n**Time estimate:** ~2-5 minutes per 1000 steps."
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 5: Training\n\nTrain models and save results to a new session folder.\n\n**Time estimate:** ~2-5 minutes per 1000 steps."
+  },
+  {
+   "cell_type": "markdown",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "## Step 5: View Results\n\nVisualize and analyze training results.\n\nCreates:\n- Visual comparison (3 or 4 panel)\n- Detailed summary text\n- Saves to `output/session_N/<folder>/summary.png` and `summary.txt`"
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 6: View Results\n\nVisualize and analyze training results.\n\nCreates:\n- Visual comparison (3 or 4 panel)\n- Detailed summary text\n- Saves to `output/session_N/<folder>/summary.png` and `summary.txt`"
+  },
+  {
+   "cell_type": "markdown",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "## Step 6: Compare Batch Results (Optional)\n\nCompare metrics across multiple training runs."
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 7: Compare Batch Results (Optional)\n\nCompare metrics across multiple training runs."
+  },
+  {
+   "cell_type": "markdown",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": "## Step 7: Plot Training Metrics (Optional)\n\nPlot detailed training metrics showing loss, quality, and size evolution."
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": "## Step 8: Plot Training Metrics (Optional)\n\nPlot detailed training metrics showing loss, quality, and size evolution."
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from quick_start import plot_metrics\n",
+    "\n",
+    "# Plot first result\n",
+    "plot_metrics(results[0])\n",
+    "\n",
+    "# Or plot all results\n",
+    "# for folder in results:\n",
+    "#     plot_metrics(folder)"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}

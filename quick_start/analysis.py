@@ -4,9 +4,14 @@ import os
 import sys
 import shutil
 import numpy as np
-import matplotlib.pyplot as plt
 from PIL import Image
 from typing import Dict, Any, Optional
+
+# Configure matplotlib BEFORE importing pyplot
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.rcParams['text.usetex'] = False  # Disable LaTeX
+import matplotlib.pyplot as plt
 
 from .utils import get_paths, format_size, format_ratio
 

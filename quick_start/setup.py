@@ -128,9 +128,12 @@ def install_gsplat() -> None:
     print("Installing gsplat CUDA extension...\n")
     print("This will take 5-10 minutes.\n")
 
-    ROOT_WORKSPACE = os.getcwd()
-    REPO_DIR = os.path.join(ROOT_WORKSPACE, "image-gs")
+    # Get current directory (should be image-gs/)
+    REPO_DIR = os.getcwd()
     gsplat_dir = os.path.join(REPO_DIR, "gsplat")
+
+    if not os.path.exists(gsplat_dir):
+        raise FileNotFoundError(f"gsplat directory not found: {gsplat_dir}\nMake sure you're running from the image-gs repository root.")
 
     original_dir = os.getcwd()
     os.chdir(gsplat_dir)
@@ -181,13 +184,11 @@ def verify_installation() -> None:
         errors.append(f"gsplat: {e}")
 
     try:
-        ROOT_WORKSPACE = os.getcwd()
-        REPO_DIR = os.path.join(ROOT_WORKSPACE, "image-gs")
-        os.chdir(REPO_DIR)
-        sys.path.insert(0, REPO_DIR)
+        REPO_DIR = os.getcwd()  # We're already in the repo
+        if REPO_DIR not in sys.path:
+            sys.path.insert(0, REPO_DIR)
         from model import GaussianSplatting2D
         from utils.misc_utils import load_cfg
-        os.chdir(ROOT_WORKSPACE)
         print("✓ Image-GS modules")
     except Exception as e:
         errors.append(f"Image-GS: {e}")

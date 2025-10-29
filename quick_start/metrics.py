@@ -2,8 +2,13 @@
 
 import os
 import pandas as pd
-import matplotlib.pyplot as plt
 from typing import Optional
+
+# Configure matplotlib BEFORE importing pyplot
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+matplotlib.rcParams['text.usetex'] = False  # Disable LaTeX
+import matplotlib.pyplot as plt
 
 from .utils import get_paths
 

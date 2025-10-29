@@ -11,6 +11,8 @@ from typing import Dict, Any, Optional
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 matplotlib.rcParams['text.usetex'] = False  # Disable LaTeX
+matplotlib.rcParams['font.family'] = 'DejaVu Sans'  # Use standard font
+matplotlib.rcParams['mathtext.fontset'] = 'dejavusans'  # Use DejaVu for math text
 import matplotlib.pyplot as plt
 
 from .utils import get_paths, format_size, format_ratio
@@ -206,7 +208,7 @@ def _create_results_visualization(
     """
     if initial_img is not None:
         # 4-panel layout with initial render
-        fig, axes = plt.subplots(2, 2, figsize=(16, 16))
+        fig, axes = plt.subplots(2, 2, figsize=(16, 16), constrained_layout=True)
         axes = axes.flatten()
 
         axes[0].imshow(initial_img)
@@ -229,7 +231,7 @@ def _create_results_visualization(
         cbar.set_label('Absolute Difference', rotation=270, labelpad=20)
     else:
         # Original 3-panel layout
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
 
         axes[0].imshow(gt_img)
         axes[0].set_title("Ground Truth", fontsize=14, fontweight='bold')
@@ -246,7 +248,8 @@ def _create_results_visualization(
         cbar = plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
         cbar.set_label('Absolute Difference', rotation=270, labelpad=20)
 
-    plt.tight_layout()
+    # Note: Using constrained_layout=True in subplots() instead of tight_layout()
+    # to avoid LaTeX dependency issues
 
     return fig
 

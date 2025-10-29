@@ -8,6 +8,8 @@ from typing import Optional
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 matplotlib.rcParams['text.usetex'] = False  # Disable LaTeX
+matplotlib.rcParams['font.family'] = 'DejaVu Sans'  # Use standard font
+matplotlib.rcParams['mathtext.fontset'] = 'dejavusans'  # Use DejaVu for math text
 import matplotlib.pyplot as plt
 
 from .utils import get_paths

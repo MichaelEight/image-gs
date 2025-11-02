@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python test_adaptive_refinement.py:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(python test_adaptive_output.py:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python verify_changes.py:*)"
     ],
     "deny": [],
     "ask": []

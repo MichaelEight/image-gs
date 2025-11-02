@@ -170,6 +170,13 @@ def train_adaptive(
     print("\n" + "-"*80)
     print("PHASE 3: Iterative Patch Refinement")
     print("-"*80)
+    print(f"\n🔄 ADAPTIVE PATCHING ACTIVATED")
+    print(f"   Refining {len(patches_to_refine)} patches that exceed error threshold")
+    print(f"   Configuration:")
+    print(f"     - Error threshold: {adaptive_config.error_threshold}")
+    print(f"     - Max iterations per patch: {adaptive_config.max_refinement_iterations}")
+    print(f"     - Gaussian increment: +{adaptive_config.refinement_gaussian_increment} per iteration")
+    print(f"     - Max gaussians per patch: {adaptive_config.max_gaussians_per_patch}")
 
     # Extract base model state for initialization
     base_model_state = {
@@ -180,14 +187,19 @@ def train_adaptive(
     }
 
     refined_patches_dict = {}  # Store refined patches
+    patch_refinement_details = []  # Track detailed metrics for summary
 
     total_refinement_time = 0
     patches_successfully_refined = 0
 
     for idx, patch_info in enumerate(patches_to_refine, 1):
-        print(f"\n[{idx}/{len(patches_to_refine)}] Refining {patch_info.patch_id}")
+        print(f"\n{'='*60}")
+        print(f"[{idx}/{len(patches_to_refine)}] Processing {patch_info.patch_id}")
+        print(f"  Location: Row {patch_info.row}, Col {patch_info.col}")
+        print(f"  Coordinates: {patch_info.coordinates}")
         print(f"  Initial Error: {patch_info.combined_error:.4f} (threshold: {adaptive_config.error_threshold})")
         print(f"  Initial PSNR: {patch_info.psnr:.2f} dB, SSIM: {patch_info.ssim:.4f}")
+        print(f"{'='*60}")
 
         # Get patch data
         patch_idx = patch_manager.patches.index(patch_info)
@@ -217,13 +229,17 @@ def train_adaptive(
         save_image(before_error_tensor, str(patch_output_dir / "error_before.jpg"), gamma=1.0)
 
         # Iterative refinement
+        patch_start_time = time.time()
         current_gaussians = adaptive_config.base_gaussians
         best_patch = base_patch
         best_error = patch_info.combined_error
         iteration = 0
+        gaussians_added = 0
 
+        print(f"\n  Starting refinement iterations...")
         for iteration in range(1, adaptive_config.max_refinement_iterations + 1):
-            print(f"  Iteration {iteration}: Training with {current_gaussians} gaussians...")
+            print(f"\n  📊 Iteration {iteration}/{adaptive_config.max_refinement_iterations}")
+            print(f"     Training with {current_gaussians} gaussians...")
 
             # Create new model for patch training
             patch_args = type('Args', (), {})()
@@ -262,7 +278,16 @@ def train_adaptive(
                 args.gamma
             )
 
-            print(f"    Result: Error {refined_metrics['combined_error']:.4f}, PSNR {refined_metrics['psnr']:.2f}, SSIM {refined_metrics['ssim']:.4f} ({iter_time:.1f}s)")
+            # Calculate improvements
+            psnr_improvement = refined_metrics['psnr'] - before_metrics['psnr']
+            ssim_improvement = refined_metrics['ssim'] - before_metrics['ssim']
+            error_reduction = before_metrics['combined_error'] - refined_metrics['combined_error']
+
+            print(f"     Results:")
+            print(f"       Error: {refined_metrics['combined_error']:.4f} (Δ {-error_reduction:+.4f})")
+            print(f"       PSNR:  {refined_metrics['psnr']:.2f} dB (Δ {psnr_improvement:+.2f})")
+            print(f"       SSIM:  {refined_metrics['ssim']:.4f} (Δ {ssim_improvement:+.4f})")
+            print(f"       Time:  {iter_time:.1f}s")
 
             # Check if improved
             if refined_metrics['combined_error'] < best_error:
@@ -271,19 +296,23 @@ def train_adaptive(
 
             # Check if threshold met
             if refined_metrics['combined_error'] <= adaptive_config.error_threshold:
-                print(f"    ✓ Threshold met!")
+                print(f"\n     ✅ SUCCESS: Threshold met!")
+                print(f"        Target: {adaptive_config.error_threshold:.4f}")
+                print(f"        Achieved: {refined_metrics['combined_error']:.4f}")
                 patches_successfully_refined += 1
                 break
 
             # Check gaussian limit
             if current_gaussians >= adaptive_config.max_gaussians_per_patch:
-                print(f"    ! Max gaussians reached")
+                print(f"\n     ⚠️  Max gaussians limit reached ({adaptive_config.max_gaussians_per_patch})")
                 break
 
             # Add more gaussians for next iteration
             current_gaussians += adaptive_config.refinement_gaussian_increment
+            gaussians_added += adaptive_config.refinement_gaussian_increment
 
         # Update patch manager with final results
+        patch_total_time = time.time() - patch_start_time
         final_metrics = calculate_patch_error(best_patch, gt_patch,
                                               adaptive_config.psnr_weight,
                                               adaptive_config.ssim_weight, args.gamma)
@@ -307,15 +336,44 @@ def train_adaptive(
         after_error_tensor = torch.from_numpy(after_error_rgb).permute(2, 0, 1).float()
         save_image(after_error_tensor, str(patch_output_dir / "error_after.jpg"), gamma=1.0)
 
+        # Calculate total improvements
+        total_psnr_improvement = final_metrics['psnr'] - before_metrics['psnr']
+        total_ssim_improvement = final_metrics['ssim'] - before_metrics['ssim']
+        total_error_reduction = before_metrics['combined_error'] - final_metrics['combined_error']
+
+        # Print patch summary
+        print(f"\n  📈 Patch Summary:")
+        print(f"     Iterations completed: {iteration}")
+        print(f"     Gaussians added: {gaussians_added} (final: {current_gaussians})")
+        print(f"     Total time: {patch_total_time:.1f}s")
+        print(f"     Quality improvement:")
+        print(f"       PSNR:  {before_metrics['psnr']:.2f} → {final_metrics['psnr']:.2f} dB ({total_psnr_improvement:+.2f})")
+        print(f"       SSIM:  {before_metrics['ssim']:.4f} → {final_metrics['ssim']:.4f} ({total_ssim_improvement:+.4f})")
+        print(f"       Error: {before_metrics['combined_error']:.4f} → {final_metrics['combined_error']:.4f} ({-total_error_reduction:+.4f})")
+
+        threshold_status = "✅ Met" if final_metrics['combined_error'] <= adaptive_config.error_threshold else "⚠️ Not met"
+        print(f"     Threshold status: {threshold_status}")
+
         # Save patch metrics
         patch_metrics = {
             'patch_id': patch_info.patch_id,
+            'row': patch_info.row,
+            'col': patch_info.col,
             'before': before_metrics,
             'after': final_metrics,
+            'improvements': {
+                'psnr': total_psnr_improvement,
+                'ssim': total_ssim_improvement,
+                'error_reduction': total_error_reduction
+            },
             'iterations': iteration,
+            'gaussians_added': gaussians_added,
             'final_gaussians': current_gaussians,
-            'training_time_seconds': total_refinement_time
+            'training_time_seconds': patch_total_time,
+            'threshold_met': final_metrics['combined_error'] <= adaptive_config.error_threshold
         }
+        patch_refinement_details.append(patch_metrics)
+
         with open(patch_output_dir / "metrics.json", 'w') as f:
             json.dump(patch_metrics, f, indent=2)
 
@@ -403,7 +461,10 @@ def train_adaptive(
             training_time=total_refinement_time,
             base_gaussians=adaptive_config.base_gaussians,
             output_dir=str(output_dir),
-            gamma=args.gamma
+            gamma=args.gamma,
+            patch_refinement_details=patch_refinement_details,
+            patch_manager=patch_manager,
+            error_threshold=adaptive_config.error_threshold
         )
     except Exception as e:
         print(f"Warning: Could not create summary visualization: {e}")

@@ -191,6 +191,107 @@ def create_adaptive_summary_figure(
     return fig
 
 
+def create_tile_score_heatmap(
+    patch_manager,
+    error_threshold: float,
+    output_path: str = None
+):
+    """
+    Create standalone heatmap matrix showing error scores for all patches.
+
+    Args:
+        patch_manager: PatchManager instance with patch information
+        error_threshold: Error threshold value to mark on visualization
+        output_path: Optional path to save the heatmap
+
+    Returns:
+        Matplotlib figure
+    """
+    # Get patch grid dimensions
+    n_rows = patch_manager.n_rows
+    n_cols = patch_manager.n_cols
+
+    # Create error matrix
+    error_matrix = np.zeros((n_rows, n_cols))
+    for patch_info in patch_manager.patches:
+        error_matrix[patch_info.row, patch_info.col] = patch_info.combined_error
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(max(12, n_cols * 1.5), max(8, n_rows * 1.2)))
+
+    # Create heatmap
+    im = ax.imshow(error_matrix, cmap='RdYlGn_r', vmin=0, vmax=1.0, aspect='auto')
+
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Combined Error Score', fontsize=12, fontweight='bold')
+
+    # Mark threshold on colorbar
+    cbar.ax.axhline(y=error_threshold, color='blue', linewidth=2, linestyle='--')
+    cbar.ax.text(1.5, error_threshold, f'Threshold: {error_threshold:.3f}',
+                 va='center', ha='left', fontsize=10, fontweight='bold', color='blue')
+
+    # Set ticks
+    ax.set_xticks(np.arange(n_cols))
+    ax.set_yticks(np.arange(n_rows))
+    ax.set_xticklabels(np.arange(n_cols), fontsize=10)
+    ax.set_yticklabels(np.arange(n_rows), fontsize=10)
+
+    # Add grid
+    ax.set_xticks(np.arange(n_cols + 1) - 0.5, minor=True)
+    ax.set_yticks(np.arange(n_rows + 1) - 0.5, minor=True)
+    ax.grid(which='minor', color='white', linestyle='-', linewidth=2)
+
+    # Annotate cells with error values and patch IDs
+    for patch_info in patch_manager.patches:
+        row, col = patch_info.row, patch_info.col
+        error = patch_info.combined_error
+
+        # Choose text color based on error value
+        text_color = 'white' if error > 0.5 else 'black'
+
+        # Add error value
+        ax.text(col, row, f'{error:.3f}',
+                ha='center', va='center', fontsize=10,
+                color=text_color, fontweight='bold')
+
+        # Add patch ID below error value
+        ax.text(col, row + 0.3, f'{patch_info.patch_id}',
+                ha='center', va='center', fontsize=7,
+                color=text_color, style='italic')
+
+        # Add border for patches needing refinement
+        if patch_info.needs_refinement:
+            rect = plt.Rectangle((col - 0.5, row - 0.5), 1, 1,
+                                fill=False, edgecolor='red', linewidth=3)
+            ax.add_patch(rect)
+
+    # Labels
+    ax.set_xlabel('Column', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Row', fontsize=14, fontweight='bold')
+    ax.set_title('Patch Error Score Heatmap (Base Training)\nRed Border = Needs Refinement',
+                fontsize=16, fontweight='bold', pad=20)
+
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='green', alpha=0.5, label=f'Below threshold (<{error_threshold:.3f})'),
+        Patch(facecolor='red', alpha=0.5, label=f'Above threshold (≥{error_threshold:.3f})'),
+        Patch(facecolor='none', edgecolor='red', linewidth=3, label='Refined in adaptive training')
+    ]
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.15, 1),
+             fontsize=11, frameon=True, fancybox=True, shadow=True)
+
+    plt.tight_layout()
+
+    # Save if path provided
+    if output_path:
+        fig.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"[OK] Tile score heatmap saved: {output_path}")
+
+    return fig
+
+
 def format_adaptive_summary_text(
     base_psnr: float,
     base_ssim: float,
@@ -198,7 +299,8 @@ def format_adaptive_summary_text(
     enhanced_ssim: float,
     patch_stats: dict,
     training_time: float,
-    base_gaussians: int
+    base_gaussians: int,
+    patch_refinement_details: list = None
 ) -> str:
     """
     Format detailed text summary for adaptive training.
@@ -211,6 +313,7 @@ def format_adaptive_summary_text(
         patch_stats: Dictionary with patch statistics
         training_time: Total refinement time in seconds
         base_gaussians: Number of base gaussians
+        patch_refinement_details: List of per-patch refinement details
 
     Returns:
         Formatted text summary
@@ -222,6 +325,17 @@ def format_adaptive_summary_text(
     summary.append("="*80)
     summary.append("ADAPTIVE PATCH-BASED REFINEMENT SUMMARY")
     summary.append("="*80)
+    summary.append("")
+
+    # Adaptive Patching Status
+    summary.append("ADAPTIVE PATCHING STATUS")
+    summary.append("-"*80)
+    if patch_refinement_details and len(patch_refinement_details) > 0:
+        summary.append("✅ ACTIVATED - Adaptive patching was used")
+        summary.append(f"   Refined {len(patch_refinement_details)} patches")
+    else:
+        summary.append("❌ NOT ACTIVATED - No patches needed refinement")
+        summary.append("   Base model quality was sufficient for all patches")
     summary.append("")
 
     # Quality Metrics
@@ -266,6 +380,62 @@ def format_adaptive_summary_text(
         summary.append(f"Mean SSIM: {patch_stats.get('mean_ssim', 0):.4f}")
         summary.append("")
 
+    # Detailed Per-Patch Breakdown
+    if patch_refinement_details and len(patch_refinement_details) > 0:
+        summary.append("ADAPTIVE PATCHING DETAILS - PER-PATCH BREAKDOWN")
+        summary.append("="*80)
+        summary.append("")
+
+        # Table header
+        header = f"{'Patch ID':<12} {'Location':<10} {'Before (PSNR/SSIM/Error)':<28} {'After (PSNR/SSIM/Error)':<28} {'Improvement':<18} {'Gaussians':<12} {'Time (s)':<10}"
+        summary.append(header)
+        summary.append("-"*len(header))
+
+        total_gaussians_added = 0
+        total_time = 0
+
+        for detail in patch_refinement_details:
+            patch_id = detail['patch_id']
+            location = f"R{detail['row']}C{detail['col']}"
+
+            before = detail['before']
+            after = detail['after']
+            before_str = f"{before['psnr']:.1f}/{before['ssim']:.3f}/{before['combined_error']:.3f}"
+            after_str = f"{after['psnr']:.1f}/{after['ssim']:.3f}/{after['combined_error']:.3f}"
+
+            improvements = detail['improvements']
+            improvement_str = f"+{improvements['psnr']:.2f}/+{improvements['ssim']:.3f}"
+
+            gaussians_str = f"+{detail['gaussians_added']} ({detail['final_gaussians']})"
+            time_str = f"{detail['training_time_seconds']:.1f}"
+
+            # Threshold indicator
+            threshold_mark = "✓" if detail.get('threshold_met', False) else "✗"
+
+            row_str = f"{patch_id:<12} {location:<10} {before_str:<28} {after_str:<28} {improvement_str:<18} {gaussians_str:<12} {time_str:<10} {threshold_mark}"
+            summary.append(row_str)
+
+            total_gaussians_added += detail['gaussians_added']
+            total_time += detail['training_time_seconds']
+
+        summary.append("-"*len(header))
+
+        # Summary row
+        patches_met = sum(1 for d in patch_refinement_details if d.get('threshold_met', False))
+        avg_improvement_psnr = sum(d['improvements']['psnr'] for d in patch_refinement_details) / len(patch_refinement_details)
+        avg_improvement_ssim = sum(d['improvements']['ssim'] for d in patch_refinement_details) / len(patch_refinement_details)
+
+        summary.append(f"\nSUMMARY:")
+        summary.append(f"  Total patches refined: {len(patch_refinement_details)}")
+        summary.append(f"  Patches meeting threshold: {patches_met}/{len(patch_refinement_details)}")
+        summary.append(f"  Total gaussians added: {total_gaussians_added}")
+        summary.append(f"  Average PSNR improvement: +{avg_improvement_psnr:.2f} dB")
+        summary.append(f"  Average SSIM improvement: +{avg_improvement_ssim:.4f}")
+        summary.append(f"  Total refinement time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
+        summary.append("")
+        summary.append(f"Legend: ✓ = Threshold met, ✗ = Threshold not met")
+        summary.append("")
+
     summary.append("="*80)
 
     return "\n".join(summary)
@@ -284,7 +454,10 @@ def view_adaptive_results(
     training_time: float,
     base_gaussians: int,
     output_dir: str,
-    gamma: float = 2.2
+    gamma: float = 2.2,
+    patch_refinement_details: list = None,
+    patch_manager = None,
+    error_threshold: float = 0.3
 ):
     """
     Create and save comprehensive visualization for adaptive training results.
@@ -303,6 +476,9 @@ def view_adaptive_results(
         base_gaussians: Number of base gaussians
         output_dir: Output directory path
         gamma: Gamma correction value
+        patch_refinement_details: List of per-patch refinement details
+        patch_manager: PatchManager instance for creating heatmap
+        error_threshold: Error threshold value
     """
     print("\nGenerating comprehensive visualization...")
 
@@ -318,10 +494,21 @@ def view_adaptive_results(
     plt.close(fig)
     print(f"[OK] Summary visualization saved: {summary_path}")
 
+    # Create tile score heatmap if patch manager provided
+    if patch_manager is not None:
+        heatmap_path = os.path.join(output_dir, "tile_scores_heatmap.png")
+        heatmap_fig = create_tile_score_heatmap(
+            patch_manager,
+            error_threshold,
+            output_path=heatmap_path
+        )
+        plt.close(heatmap_fig)
+
     # Create and save text summary
     summary_text = format_adaptive_summary_text(
         base_psnr, base_ssim, enhanced_psnr, enhanced_ssim,
-        patch_stats, training_time, base_gaussians
+        patch_stats, training_time, base_gaussians,
+        patch_refinement_details=patch_refinement_details
     )
 
     summary_text_path = os.path.join(output_dir, "summary.txt")

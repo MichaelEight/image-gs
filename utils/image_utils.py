@@ -18,7 +18,7 @@ font_manager.fontManager.addfont(FONT_PATH)
 FONT_PROP = font_manager.FontProperties(fname=FONT_PATH).get_name()
 
 plt.rcParams['font.family'] = FONT_PROP
-plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = False  # Disable LaTeX to avoid dependency issues
 matplotlib.rcParams['font.size'] = 16
 matplotlib.rcParams['axes.titlesize'] = 16
 matplotlib.rcParams['figure.titlesize'] = 16

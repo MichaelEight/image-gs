@@ -7,7 +7,7 @@ import glob
 import itertools
 from typing import List, Optional, Tuple
 
-from .config import TrainingConfig
+from .config import TrainingConfig, AdaptiveRefinementConfig
 from .utils import get_paths
 
 
@@ -386,3 +386,75 @@ def train(config: TrainingConfig) -> List[str]:
     print("=" * 80)
 
     return output_folders
+
+
+def train_adaptive_wrapper(
+    input_filename: str,
+    adaptive_config: AdaptiveRefinementConfig,
+    max_steps: int = 10000
+) -> str:
+    """
+    Wrapper for adaptive refinement training with simplified interface.
+
+    Args:
+        input_filename: Input image filename
+        adaptive_config: Adaptive refinement configuration
+        max_steps: Maximum training steps for base and patch training
+
+    Returns:
+        Path to output directory
+
+    Example:
+        >>> from quick_start.config import AdaptiveRefinementConfig
+        >>> config = AdaptiveRefinementConfig(
+        ...     enable=True,
+        ...     patch_size=256,
+        ...     overlap=32,
+        ...     error_threshold=0.3,
+        ...     base_gaussians=10000
+        ... )
+        >>> output = train_adaptive_wrapper("cat.png", config)
+    """
+    from .adaptive_training import train_adaptive
+    import argparse
+
+    ROOT_WORKSPACE, REPO_DIR, INPUT_DIR, OUTPUT_DIR = get_paths()
+
+    # Change to repository directory
+    os.chdir(REPO_DIR)
+
+    # Validate input
+    input_path = os.path.join(INPUT_DIR, input_filename)
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Input image not found: {input_path}")
+
+    # Copy input to media/images/
+    media_input_path = os.path.join(REPO_DIR, "media", "images", input_filename)
+    os.makedirs(os.path.join(REPO_DIR, "media", "images"), exist_ok=True)
+    shutil.copy2(input_path, media_input_path)
+
+    # Create session folder
+    session_name, session_path = _create_session_folder()
+
+    # Load default config
+    sys.path.insert(0, REPO_DIR)
+    from utils.misc_utils import load_cfg
+
+    parser = argparse.ArgumentParser()
+    parser = load_cfg(cfg_path="cfgs/default.yaml", parser=parser)
+    args = parser.parse_args([])
+
+    # Update args for adaptive training
+    args.input_path = f"images/{input_filename}"
+    args.max_steps = max_steps
+    args.num_gaussians = adaptive_config.base_gaussians
+
+    # Run adaptive training
+    result = train_adaptive(
+        args,
+        adaptive_config,
+        workspace_dir=ROOT_WORKSPACE,
+        session_name=session_name
+    )
+
+    return result['output_dir']

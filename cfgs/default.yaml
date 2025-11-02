@@ -60,3 +60,14 @@ initial_ratio:         0.5
 add_steps:             500
 add_times:             4
 post_min_steps:        3000
+# Adaptive Refinement
+adaptive_refinement:           False # Enable adaptive patch-based refinement
+adaptive_patch_size:           256 # Size of each square patch in pixels
+adaptive_overlap:              32 # Overlap between adjacent patches in pixels
+adaptive_psnr_weight:          0.7 # Weight for PSNR in combined error metric (0-1)
+adaptive_ssim_weight:          0.3 # Weight for SSIM in combined error metric (0-1)
+adaptive_error_threshold:      0.3 # Combined error threshold for refinement (0-1, lower is stricter)
+adaptive_base_gaussians:       10000 # Number of gaussians for base training
+adaptive_refinement_increment: 2000 # Gaussians to add per refinement iteration
+adaptive_max_iterations:       3 # Maximum refinement iterations per patch
+adaptive_max_gaussians_per_patch: 1000 # Safety limit on gaussians per patch

@@ -40,12 +40,43 @@ def get_log_dir(args):
 
 
 def main(args):
-    args.log_dir = get_log_dir(args)
-    ImageGS = GaussianSplatting2D(args)
-    if args.eval:
-        ImageGS.render(render_height=args.render_height)
+    # Check if adaptive refinement is enabled
+    if hasattr(args, 'adaptive_refinement') and args.adaptive_refinement:
+        from quick_start.adaptive_training import train_adaptive
+        from quick_start.config import AdaptiveRefinementConfig
+
+        # Create adaptive refinement config from args
+        adaptive_config = AdaptiveRefinementConfig(
+            enable=True,
+            patch_size=args.adaptive_patch_size,
+            overlap=args.adaptive_overlap,
+            psnr_weight=args.adaptive_psnr_weight,
+            ssim_weight=args.adaptive_ssim_weight,
+            error_threshold=args.adaptive_error_threshold,
+            base_gaussians=args.adaptive_base_gaussians,
+            refinement_gaussian_increment=args.adaptive_refinement_increment,
+            max_refinement_iterations=args.adaptive_max_iterations,
+            max_gaussians_per_patch=args.adaptive_max_gaussians_per_patch
+        )
+
+        # Run adaptive training
+        result = train_adaptive(
+            args,
+            adaptive_config,
+            workspace_dir=args.data_root,
+            session_name=args.exp_name
+        )
+
+        print(f"\nAdaptive refinement complete!")
+        print(f"Results saved to: {result['output_dir']}")
     else:
-        ImageGS.optimize()
+        # Standard training/rendering
+        args.log_dir = get_log_dir(args)
+        ImageGS = GaussianSplatting2D(args)
+        if args.eval:
+            ImageGS.render(render_height=args.render_height)
+        else:
+            ImageGS.optimize()
 
 
 if __name__ == "__main__":

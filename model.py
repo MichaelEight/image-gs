@@ -743,3 +743,200 @@ class GaussianSplatting2D(nn.Module):
                                            {'params': self.feat, 'lr': self.feat_lr}])
         self.worklog.info(f"Step: {self.step:d} | Adding {add_num:d} Gaussians ({self.num_gaussians-add_num:d} -> {self.num_gaussians:d})")
         self.worklog.info("***********************************************")
+
+    # ========== Patch-based Training Methods ==========
+
+    def set_patch_target(self, patch_gt: torch.Tensor):
+        """
+        Set a patch as the training target (for patch-specific training).
+
+        Args:
+            patch_gt: Ground truth patch tensor (C, H, W)
+        """
+        self.gt_images = patch_gt.to(dtype=self.dtype, device=self.device)
+        self.img_h, self.img_w = self.gt_images.shape[1:]
+        self.tile_bounds = ((self.img_w + self.block_w - 1) // self.block_w,
+                           (self.img_h + self.block_h - 1) // self.block_h, 1)
+        self.num_pixels = self.img_h * self.img_w
+        self.pixel_xy = get_grid(h=self.img_h, w=self.img_w).to(dtype=self.dtype, device=self.device).reshape(-1, 2)
+
+    def init_gaussians_in_patch_bounds(
+        self,
+        num_gaussians: int,
+        bounds: tuple = None,
+        init_from_base: bool = False,
+        base_xy: torch.Tensor = None,
+        base_scale: torch.Tensor = None,
+        base_rot: torch.Tensor = None,
+        base_feat: torch.Tensor = None
+    ):
+        """
+        Initialize gaussians within patch bounds, optionally from base model.
+
+        Args:
+            num_gaussians: Number of gaussians to initialize
+            bounds: (x_min, y_min, x_max, y_max) in normalized coordinates [0, 1]
+            init_from_base: Whether to initialize from base model gaussians
+            base_xy: Base model xy positions
+            base_scale: Base model scales
+            base_rot: Base model rotations
+            base_feat: Base model features
+        """
+        if init_from_base and base_xy is not None:
+            # Extract gaussians from base model that fall within patch
+            from utils.patch_utils import extract_patch_gaussians
+
+            mask = extract_patch_gaussians(base_xy, bounds, margin=0.1)
+            num_from_base = mask.sum().item()
+
+            if num_from_base > 0:
+                # Use base model gaussians that fall in patch
+                self.xy = nn.Parameter(base_xy[mask].detach().clone(), requires_grad=True)
+                self.scale = nn.Parameter(base_scale[mask].detach().clone(), requires_grad=True)
+                self.rot = nn.Parameter(base_rot[mask].detach().clone(), requires_grad=True)
+                self.feat = nn.Parameter(base_feat[mask].detach().clone(), requires_grad=True)
+                self.vis_feat = nn.Parameter(torch.rand_like(self.feat), requires_grad=False)
+
+                self.num_gaussians = num_from_base
+                self.worklog.info(f"Initialized {num_from_base} gaussians from base model")
+
+                # Add additional gaussians if needed
+                if num_gaussians > num_from_base:
+                    add_num = num_gaussians - num_from_base
+                    self._add_random_gaussians_in_bounds(add_num, bounds)
+            else:
+                # No base gaussians in patch, initialize randomly
+                self.num_gaussians = 0
+                self._add_random_gaussians_in_bounds(num_gaussians, bounds)
+        else:
+            # Random initialization within bounds
+            self.num_gaussians = 0
+            self._add_random_gaussians_in_bounds(num_gaussians, bounds)
+
+    def _add_random_gaussians_in_bounds(self, num_gaussians: int, bounds: tuple = None):
+        """
+        Add randomly initialized gaussians, optionally constrained to bounds.
+
+        Args:
+            num_gaussians: Number of gaussians to add
+            bounds: Optional (x_min, y_min, x_max, y_max) in normalized coordinates
+        """
+        # Generate random positions
+        if bounds is not None:
+            x_min, y_min, x_max, y_max = bounds
+            new_xy = torch.rand(num_gaussians, 2, dtype=self.dtype, device=self.device)
+            new_xy[:, 0] = x_min + new_xy[:, 0] * (x_max - x_min)
+            new_xy[:, 1] = y_min + new_xy[:, 1] * (y_max - y_min)
+        else:
+            new_xy = torch.rand(num_gaussians, 2, dtype=self.dtype, device=self.device)
+
+        # Initialize other parameters
+        new_scale = torch.ones(num_gaussians, 2, dtype=self.dtype, device=self.device)
+        new_scale.fill_(self.init_scale if self.disable_inverse_scale else 1.0/self.init_scale)
+        new_rot = torch.zeros(num_gaussians, 1, dtype=self.dtype, device=self.device)
+        new_feat = torch.rand(num_gaussians, self.feat_dim, dtype=self.dtype, device=self.device)
+        new_vis_feat = torch.rand_like(new_feat)
+
+        if self.num_gaussians == 0:
+            # First initialization
+            self.xy = nn.Parameter(new_xy, requires_grad=True)
+            self.scale = nn.Parameter(new_scale, requires_grad=True)
+            self.rot = nn.Parameter(new_rot, requires_grad=True)
+            self.feat = nn.Parameter(new_feat, requires_grad=True)
+            self.vis_feat = nn.Parameter(new_vis_feat, requires_grad=False)
+            self.num_gaussians = num_gaussians
+        else:
+            # Add to existing gaussians
+            self.xy = nn.Parameter(torch.cat([self.xy.detach(), new_xy], dim=0), requires_grad=True)
+            self.scale = nn.Parameter(torch.cat([self.scale.detach(), new_scale], dim=0), requires_grad=True)
+            self.rot = nn.Parameter(torch.cat([self.rot.detach(), new_rot], dim=0), requires_grad=True)
+            self.feat = nn.Parameter(torch.cat([self.feat.detach(), new_feat], dim=0), requires_grad=True)
+            self.vis_feat = nn.Parameter(torch.cat([self.vis_feat.detach(), new_vis_feat], dim=0), requires_grad=False)
+            self.num_gaussians += num_gaussians
+
+        self.worklog.info(f"Added {num_gaussians} random gaussians (total: {self.num_gaussians})")
+
+    def train_patch(
+        self,
+        patch_gt: torch.Tensor,
+        num_gaussians: int,
+        max_steps: int,
+        bounds: tuple = None,
+        base_model_state: dict = None,
+        log_prefix: str = "patch"
+    ) -> dict:
+        """
+        Train a single patch.
+
+        Args:
+            patch_gt: Ground truth patch tensor (C, H, W)
+            num_gaussians: Number of gaussians to use
+            max_steps: Number of training steps
+            bounds: Patch bounds in normalized coordinates
+            base_model_state: Optional base model state dict to initialize from
+            log_prefix: Prefix for logging
+
+        Returns:
+            Dictionary with trained model state and metrics
+        """
+        # Set patch as target
+        self.set_patch_target(patch_gt)
+
+        # Initialize gaussians
+        if base_model_state is not None:
+            self.init_gaussians_in_patch_bounds(
+                num_gaussians,
+                bounds,
+                init_from_base=True,
+                base_xy=base_model_state['xy'],
+                base_scale=base_model_state['scale'],
+                base_rot=base_model_state['rot'],
+                base_feat=base_model_state['feat']
+            )
+        else:
+            self.init_gaussians_in_patch_bounds(num_gaussians, bounds)
+
+        # Reinitialize optimizer for patch training
+        self.optimizer = torch.optim.Adam([
+            {'params': self.xy, 'lr': self.pos_lr},
+            {'params': self.scale, 'lr': self.scale_lr},
+            {'params': self.rot, 'lr': self.rot_lr},
+            {'params': self.feat, 'lr': self.feat_lr}
+        ])
+
+        # Training loop
+        self.worklog.info(f"Starting patch training: {log_prefix} | {num_gaussians} gaussians | {max_steps} steps")
+
+        for step in range(max_steps):
+            self.step = step
+
+            # Forward pass
+            images, _ = self.forward()
+
+            # Calculate loss
+            self._get_total_loss(images)
+
+            # Backward pass
+            self.optimizer.zero_grad()
+            self.total_loss.backward()
+            self.optimizer.step()
+
+            # Log periodically
+            if step % 100 == 0:
+                psnr, ssim = self._evaluate(log=False)
+                self.worklog.info(f"{log_prefix} Step {step}/{max_steps} | Loss: {self.total_loss.item():.6f} | PSNR: {psnr:.2f} | SSIM: {ssim:.4f}")
+
+        # Final evaluation
+        psnr, ssim = self._evaluate(log=False)
+        self.worklog.info(f"{log_prefix} Training complete | Final PSNR: {psnr:.2f} | SSIM: {ssim:.4f}")
+
+        # Return state and metrics
+        return {
+            'xy': self.xy.detach().clone(),
+            'scale': self.scale.detach().clone(),
+            'rot': self.rot.detach().clone(),
+            'feat': self.feat.detach().clone(),
+            'psnr': psnr,
+            'ssim': ssim,
+            'num_gaussians': self.num_gaussians
+        }

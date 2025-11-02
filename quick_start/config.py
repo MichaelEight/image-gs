@@ -5,6 +5,67 @@ from typing import List, Optional, Union
 
 
 @dataclass
+class AdaptiveRefinementConfig:
+    """
+    Configuration for adaptive patch-based refinement.
+
+    Attributes:
+        enable: Enable adaptive refinement feature
+        patch_size: Size of each square patch in pixels
+        overlap: Overlap between adjacent patches in pixels
+        psnr_weight: Weight for PSNR in combined error metric (0-1)
+        ssim_weight: Weight for SSIM in combined error metric (0-1)
+        error_threshold: Combined error threshold for refinement (0-1, lower is stricter)
+        base_gaussians: Number of gaussians for base training
+        refinement_gaussian_increment: Gaussians to add per refinement iteration
+        max_refinement_iterations: Maximum refinement iterations per patch
+        max_gaussians_per_patch: Safety limit on gaussians per patch
+    """
+    enable: bool = False
+    patch_size: int = 256
+    overlap: int = 32
+    psnr_weight: float = 0.7
+    ssim_weight: float = 0.3
+    error_threshold: float = 0.3  # Combined error threshold
+    base_gaussians: int = 10000
+    refinement_gaussian_increment: int = 2000
+    max_refinement_iterations: int = 3
+    max_gaussians_per_patch: int = 20000
+
+    def __post_init__(self):
+        """Validate configuration."""
+        if self.patch_size <= 0:
+            raise ValueError(f"patch_size must be positive: {self.patch_size}")
+
+        if self.overlap < 0 or self.overlap >= self.patch_size:
+            raise ValueError(f"overlap must be in [0, patch_size): {self.overlap}")
+
+        if not (0 <= self.psnr_weight <= 1):
+            raise ValueError(f"psnr_weight must be in [0, 1]: {self.psnr_weight}")
+
+        if not (0 <= self.ssim_weight <= 1):
+            raise ValueError(f"ssim_weight must be in [0, 1]: {self.ssim_weight}")
+
+        if abs(self.psnr_weight + self.ssim_weight - 1.0) > 0.01:
+            raise ValueError(f"psnr_weight + ssim_weight must equal 1.0")
+
+        if not (0 <= self.error_threshold <= 1):
+            raise ValueError(f"error_threshold must be in [0, 1]: {self.error_threshold}")
+
+        if self.base_gaussians <= 0:
+            raise ValueError(f"base_gaussians must be positive: {self.base_gaussians}")
+
+        if self.refinement_gaussian_increment <= 0:
+            raise ValueError(f"refinement_gaussian_increment must be positive")
+
+        if self.max_refinement_iterations <= 0:
+            raise ValueError(f"max_refinement_iterations must be positive")
+
+        if self.max_gaussians_per_patch < self.base_gaussians:
+            raise ValueError(f"max_gaussians_per_patch must be >= base_gaussians")
+
+
+@dataclass
 class TrainingConfig:
     """
     Configuration for Image-GS training.

@@ -78,6 +78,7 @@ class TrainingConfig:
         init_gaussian_file: Path to initial Gaussian checkpoint relative to workspace
                            (e.g., "output/session_1/cat-5000-3500/model.pt"). None for random init.
         allow_partial: Allow partial initialization if Gaussian counts don't match
+        adaptive_config: Optional adaptive refinement configuration. None for standard training.
     """
     input_filenames: List[str]
     gaussians: List[int]
@@ -85,6 +86,7 @@ class TrainingConfig:
     use_progressive: bool = True
     init_gaussian_file: Optional[str] = None
     allow_partial: bool = False
+    adaptive_config: Optional[AdaptiveRefinementConfig] = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -119,7 +121,18 @@ def set_config(
     steps: List[int],
     use_progressive: bool = True,
     init_gaussian_file: Optional[str] = None,
-    allow_partial: bool = False
+    allow_partial: bool = False,
+    # Adaptive refinement parameters
+    adaptive_refinement: bool = False,
+    adaptive_patch_size: int = 256,
+    adaptive_overlap: int = 32,
+    adaptive_psnr_weight: float = 0.7,
+    adaptive_ssim_weight: float = 0.3,
+    adaptive_error_threshold: float = 0.3,
+    adaptive_base_gaussians: Optional[int] = None,
+    adaptive_refinement_increment: int = 2000,
+    adaptive_max_iterations: int = 3,
+    adaptive_max_gaussians_per_patch: int = 20000
 ) -> TrainingConfig:
     """
     Create and validate a training configuration.
@@ -137,6 +150,18 @@ def set_config(
                            None for random initialization (default: None)
         allow_partial: Allow partial initialization if counts don't match (default: False)
 
+        # Adaptive Refinement Parameters (opt-in)
+        adaptive_refinement: Enable adaptive patch-based refinement (default: False)
+        adaptive_patch_size: Size of each square patch in pixels (default: 256)
+        adaptive_overlap: Overlap between patches in pixels (default: 32)
+        adaptive_psnr_weight: Weight for PSNR in error metric 0-1 (default: 0.7)
+        adaptive_ssim_weight: Weight for SSIM in error metric 0-1 (default: 0.3)
+        adaptive_error_threshold: Error threshold for refinement 0-1 (default: 0.3)
+        adaptive_base_gaussians: Gaussians for base training (default: uses gaussians[0])
+        adaptive_refinement_increment: Gaussians added per iteration (default: 2000)
+        adaptive_max_iterations: Max refinement iterations per patch (default: 3)
+        adaptive_max_gaussians_per_patch: Safety limit on gaussians (default: 20000)
+
     Returns:
         TrainingConfig object
 
@@ -144,24 +169,53 @@ def set_config(
         ValueError: If configuration is invalid
 
     Examples:
-        >>> # Single image
+        >>> # Standard training
         >>> config = set_config(
         ...     input_filenames="cat.png",
         ...     gaussians=[5000],
         ...     steps=[3500]
         ... )
 
-        >>> # Multiple images
+        >>> # Adaptive refinement training
+        >>> config = set_config(
+        ...     input_filenames="cat.png",
+        ...     gaussians=[10000],
+        ...     steps=[5000],
+        ...     adaptive_refinement=True,
+        ...     adaptive_error_threshold=0.3
+        ... )
+
+        >>> # Multiple images with adaptive refinement
         >>> config = set_config(
         ...     input_filenames=["cat.png", "dog.png"],
-        ...     gaussians=[1000, 5000],
-        ...     steps=[2000, 3500]
+        ...     gaussians=[10000],
+        ...     steps=[5000],
+        ...     adaptive_refinement=True
         ... )
-        >>> # This trains 8 models: 2 images × 2 gaussians × 2 steps
     """
     # Convert single filename to list
     if isinstance(input_filenames, str):
         input_filenames = [input_filenames]
+
+    # Create adaptive config if enabled
+    adaptive_config = None
+    if adaptive_refinement:
+        # Use first gaussian count as base if not specified
+        if adaptive_base_gaussians is None:
+            adaptive_base_gaussians = gaussians[0]
+
+        adaptive_config = AdaptiveRefinementConfig(
+            enable=True,
+            patch_size=adaptive_patch_size,
+            overlap=adaptive_overlap,
+            psnr_weight=adaptive_psnr_weight,
+            ssim_weight=adaptive_ssim_weight,
+            error_threshold=adaptive_error_threshold,
+            base_gaussians=adaptive_base_gaussians,
+            refinement_gaussian_increment=adaptive_refinement_increment,
+            max_refinement_iterations=adaptive_max_iterations,
+            max_gaussians_per_patch=adaptive_max_gaussians_per_patch
+        )
 
     return TrainingConfig(
         input_filenames=input_filenames,
@@ -169,5 +223,6 @@ def set_config(
         steps=steps,
         use_progressive=use_progressive,
         init_gaussian_file=init_gaussian_file,
-        allow_partial=allow_partial
+        allow_partial=allow_partial,
+        adaptive_config=adaptive_config
     )

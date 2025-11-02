@@ -6,7 +6,8 @@
       "Bash(python test_adaptive_output.py:*)",
       "Bash(pip install:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(python verify_changes.py:*)"
+      "Bash(python verify_changes.py:*)",
+      "Bash(python test_notebook_integration.py:*)"
     ],
     "deny": [],
     "ask": []

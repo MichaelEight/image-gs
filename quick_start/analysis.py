@@ -22,6 +22,8 @@ def _load_training_results(output_folder: str) -> Dict[str, Any]:
     """
     Load training results and parse configuration.
 
+    Supports both standard and adaptive refinement training outputs.
+
     Args:
         output_folder: Output folder reference (e.g., "session_1/cat-1000-2000")
 
@@ -37,51 +39,113 @@ def _load_training_results(output_folder: str) -> Dict[str, Any]:
     # Parse config from folder name (just the last part after session_N/)
     folder_name = os.path.basename(output_folder)
 
-    # Parse format: name-gaussians-steps (no timestamp)
-    parts = folder_name.rsplit("-", 2)
-    if len(parts) >= 3:
-        base_name = parts[0]
-        num_gaussians = int(parts[1])
-        max_steps = int(parts[2])
+    # Check if this is adaptive training output
+    is_adaptive = "adaptive" in folder_name
+
+    if is_adaptive:
+        # Parse format: name-adaptive-gaussians
+        parts = folder_name.rsplit("-", 2)
+        if len(parts) >= 3:
+            base_name = parts[0]
+            num_gaussians = int(parts[2])
+            max_steps = "?"  # Not in folder name for adaptive
+        else:
+            base_name = folder_name
+            num_gaussians = "?"
+            max_steps = "?"
+
+        # Adaptive training paths
+        base_training_dir = os.path.join(output_path, "base_training")
+        enhanced_dir = os.path.join(output_path, "enhanced")
+
+        model_path = os.path.join(base_training_dir, "model.pt")
+        rendered_path = os.path.join(enhanced_dir, "rendered.jpg")
+        base_rendered_path = os.path.join(base_training_dir, "rendered.jpg")
+        gt_path = os.path.join(output_path, "other", "patches", "patch_0_0", "ground_truth.jpg")
+
+        # Try to find ground truth in alternative location
+        if not os.path.exists(gt_path):
+            # Try base training directory
+            gt_path_alt = os.path.join(base_training_dir, "other", "ground_truth.jpg")
+            if os.path.exists(gt_path_alt):
+                gt_path = gt_path_alt
+
+        # Load images
+        gt_img = np.array(Image.open(gt_path)).astype(np.float32) / 255.0
+        render_img = np.array(Image.open(rendered_path)).astype(np.float32) / 255.0
+        base_render_img = np.array(Image.open(base_rendered_path)).astype(np.float32) / 255.0 if os.path.exists(base_rendered_path) else None
+
+        # File sizes
+        model_size = os.path.getsize(model_path) if os.path.exists(model_path) else None
+        gt_size = os.path.getsize(gt_path)
+        render_size = os.path.getsize(rendered_path)
+
+        return {
+            'output_path': output_path,
+            'output_folder': output_folder,
+            'base_name': base_name,
+            'num_gaussians': num_gaussians,
+            'max_steps': max_steps,
+            'gt_img': gt_img,
+            'render_img': render_img,
+            'base_render_img': base_render_img,
+            'model_size': model_size,
+            'gt_size': gt_size,
+            'render_size': render_size,
+            'has_initial_model': False,
+            'initial_model_path': None,
+            'initial_model_size': None,
+            'is_adaptive': True
+        }
     else:
-        base_name = folder_name
-        num_gaussians = "?"
-        max_steps = "?"
+        # Standard training - original parsing
+        # Parse format: name-gaussians-steps (no timestamp)
+        parts = folder_name.rsplit("-", 2)
+        if len(parts) >= 3:
+            base_name = parts[0]
+            num_gaussians = int(parts[1])
+            max_steps = int(parts[2])
+        else:
+            base_name = folder_name
+            num_gaussians = "?"
+            max_steps = "?"
 
-    # File paths
-    model_path = os.path.join(output_path, "model.pt")
-    rendered_path = os.path.join(output_path, "rendered.jpg")
-    gt_path = os.path.join(output_path, "other", "ground_truth.jpg")
-    initial_model_path = os.path.join(output_path, "initial_model.pt")
+        # File paths
+        model_path = os.path.join(output_path, "model.pt")
+        rendered_path = os.path.join(output_path, "rendered.jpg")
+        gt_path = os.path.join(output_path, "other", "ground_truth.jpg")
+        initial_model_path = os.path.join(output_path, "initial_model.pt")
 
-    # Load images
-    gt_img = np.array(Image.open(gt_path)).astype(np.float32) / 255.0
-    render_img = np.array(Image.open(rendered_path)).astype(np.float32) / 255.0
+        # Load images
+        gt_img = np.array(Image.open(gt_path)).astype(np.float32) / 255.0
+        render_img = np.array(Image.open(rendered_path)).astype(np.float32) / 255.0
 
-    # File sizes
-    model_size = os.path.getsize(model_path) if os.path.exists(model_path) else None
-    gt_size = os.path.getsize(gt_path)
-    render_size = os.path.getsize(rendered_path)
+        # File sizes
+        model_size = os.path.getsize(model_path) if os.path.exists(model_path) else None
+        gt_size = os.path.getsize(gt_path)
+        render_size = os.path.getsize(rendered_path)
 
-    # Check for initial model
-    has_initial_model = os.path.exists(initial_model_path)
-    initial_model_size = os.path.getsize(initial_model_path) if has_initial_model else None
+        # Check for initial model
+        has_initial_model = os.path.exists(initial_model_path)
+        initial_model_size = os.path.getsize(initial_model_path) if has_initial_model else None
 
-    return {
-        'output_path': output_path,
-        'output_folder': output_folder,
-        'base_name': base_name,
-        'num_gaussians': num_gaussians,
-        'max_steps': max_steps,
-        'gt_img': gt_img,
-        'render_img': render_img,
-        'model_size': model_size,
-        'gt_size': gt_size,
-        'render_size': render_size,
-        'has_initial_model': has_initial_model,
-        'initial_model_path': initial_model_path if has_initial_model else None,
-        'initial_model_size': initial_model_size
-    }
+        return {
+            'output_path': output_path,
+            'output_folder': output_folder,
+            'base_name': base_name,
+            'num_gaussians': num_gaussians,
+            'max_steps': max_steps,
+            'gt_img': gt_img,
+            'render_img': render_img,
+            'base_render_img': None,
+            'model_size': model_size,
+            'gt_size': gt_size,
+            'render_size': render_size,
+            'has_initial_model': has_initial_model,
+            'initial_model_path': initial_model_path if has_initial_model else None,
+            'initial_model_size': initial_model_size,
+            'is_adaptive': False
+        }
 
 
 def _calculate_quality_metrics(gt_img: np.ndarray, render_img: np.ndarray) -> Dict[str, Any]:
@@ -417,13 +481,48 @@ def view_results(output_folder: str) -> None:
     This function loads training results, calculates quality metrics,
     creates visualizations, and saves summary files.
 
+    Supports both standard training and adaptive refinement outputs.
+
     Args:
-        output_folder: Name of folder in output/ (e.g., "cat-10000-5000-20251027_143052")
+        output_folder: Name of folder in output/ (e.g., "cat-10000-5000-20251027_143052" or "session_1/cat-adaptive-10000")
 
     Example:
-        >>> view_results("cat-5000-3500-20251027_143052")
+        >>> # Standard training
+        >>> view_results("session_1/cat-5000-3500")
+
+        >>> # Adaptive refinement training
+        >>> view_results("session_1/cat-adaptive-10000")
     """
     results_data = _load_training_results(output_folder)
+
+    # Check if this is adaptive training
+    if results_data.get('is_adaptive', False):
+        # For adaptive training, just display the existing summaries
+        print("\n" + "="*80)
+        print("ADAPTIVE REFINEMENT TRAINING RESULTS")
+        print("="*80)
+        print(f"\nOutput folder: {results_data['output_folder']}")
+        print(f"Full path: {results_data['output_path']}")
+        print("\nAdaptive training results include:")
+        print("  📊 summary.png - Comprehensive 6-panel visualization")
+        print("  📄 summary.txt - Detailed text report with per-patch breakdown")
+        print("  📈 tile_scores_heatmap.png - Patch error scores matrix")
+        print("  🖼️  comparison.jpg - 3-way comparison (GT, base, enhanced)")
+        print("  📁 other/patches/ - Individual patch results")
+        print("\nTo view the adaptive training summary:")
+        print(f"  - Open: {os.path.join(results_data['output_path'], 'summary.txt')}")
+        print(f"  - View: {os.path.join(results_data['output_path'], 'summary.png')}")
+        print(f"  - Heatmap: {os.path.join(results_data['output_path'], 'tile_scores_heatmap.png')}")
+        print("="*80 + "\n")
+
+        # Show summary.txt if it exists
+        summary_txt_path = os.path.join(results_data['output_path'], 'summary.txt')
+        if os.path.exists(summary_txt_path):
+            with open(summary_txt_path, 'r') as f:
+                print(f.read())
+        return
+
+    # Standard training - original flow
     metrics_data = _calculate_quality_metrics(results_data['gt_img'], results_data['render_img'])
 
     # Try to render initial Gaussians if available

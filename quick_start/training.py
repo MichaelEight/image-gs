@@ -304,6 +304,9 @@ def train(config: TrainingConfig) -> List[str]:
     This function trains all combinations of images × Gaussians × Steps
     specified in the config. All results are saved in a single session folder.
 
+    Supports both standard training and adaptive refinement training based on
+    the config.adaptive_config setting.
+
     Args:
         config: Training configuration object
 
@@ -311,21 +314,39 @@ def train(config: TrainingConfig) -> List[str]:
         List of output folder names (relative to session folder)
 
     Example:
+        >>> # Standard training
         >>> config = set_config(
         ...     input_filenames=["cat.png", "dog.png"],
         ...     gaussians=[1000, 5000],
         ...     steps=[2000, 3500]
         ... )
         >>> results = train(config)  # Trains 8 models (2×2×2)
-        >>> # Results in output/session_N/:
-        >>> #   cat-1000-2000/
-        >>> #   cat-1000-3500/
-        >>> #   cat-5000-2000/
-        >>> #   cat-5000-3500/
-        >>> #   dog-1000-2000/
-        >>> #   dog-1000-3500/
-        >>> #   dog-5000-2000/
-        >>> #   dog-5000-3500/
+
+        >>> # Adaptive refinement training
+        >>> config = set_config(
+        ...     input_filenames="cat.png",
+        ...     gaussians=[10000],
+        ...     steps=[5000],
+        ...     adaptive_refinement=True
+        ... )
+        >>> results = train(config)  # Uses adaptive patching
+    """
+    # Check if adaptive refinement is enabled
+    if config.adaptive_config is not None and config.adaptive_config.enable:
+        return _train_adaptive_batch(config)
+    else:
+        return _train_standard_batch(config)
+
+
+def _train_standard_batch(config: TrainingConfig) -> List[str]:
+    """
+    Train standard Image-GS models (original behavior).
+
+    Args:
+        config: Training configuration object
+
+    Returns:
+        List of output folder names (relative to session folder)
     """
     # Create session folder
     session_name, session_path = _create_session_folder()
@@ -376,6 +397,123 @@ def train(config: TrainingConfig) -> List[str]:
 
     print("=" * 80)
     print("✅ ALL TRAINING COMPLETE")
+    print("=" * 80)
+    print(f"Session:    {session_name}")
+    print(f"Total runs: {total_combinations}")
+    print()
+    print("Output folders:")
+    for i, folder in enumerate(output_folders, 1):
+        print(f"  {i}. {folder}")
+    print("=" * 80)
+
+    return output_folders
+
+
+def _train_adaptive_batch(config: TrainingConfig) -> List[str]:
+    """
+    Train with adaptive refinement for all image/step combinations.
+
+    Args:
+        config: Training configuration object with adaptive_config
+
+    Returns:
+        List of output folder names (relative to session folder)
+    """
+    from .adaptive_training import train_adaptive
+    import argparse
+
+    # Create session folder
+    session_name, session_path = _create_session_folder()
+
+    ROOT_WORKSPACE, REPO_DIR, INPUT_DIR, OUTPUT_DIR = get_paths()
+
+    # For adaptive training, we only use the first gaussian count (base gaussians)
+    # and generate combinations of images × steps
+    combinations = list(itertools.product(config.input_filenames, config.steps))
+    total_combinations = len(combinations)
+
+    print("=" * 80)
+    print(f"ADAPTIVE REFINEMENT SESSION: {session_name}")
+    print("=" * 80)
+    print(f"Mode:        Adaptive Patch-Based Refinement")
+    print(f"Images:      {len(config.input_filenames)} ({', '.join(config.input_filenames)})")
+    print(f"Base Gaussians: {config.adaptive_config.base_gaussians}")
+    print(f"Steps:       {config.steps}")
+    print(f"Patch Size:  {config.adaptive_config.patch_size}x{config.adaptive_config.patch_size}")
+    print(f"Error Threshold: {config.adaptive_config.error_threshold}")
+    print(f"Total runs:  {total_combinations} ({len(config.input_filenames)}×{len(config.steps)})")
+    print(f"Session:     {session_name}")
+    print("=" * 80)
+    print()
+
+    # Store output folders
+    output_folders = []
+
+    # Train each combination
+    for idx, (input_filename, max_steps) in enumerate(combinations, 1):
+        print(f"{'═' * 80}")
+        print(f"ADAPTIVE TRAINING {idx}/{total_combinations}")
+        print(f"{'═' * 80}")
+        print(f"Image: {input_filename}, Steps: {max_steps}")
+        print()
+
+        # Change to repository directory
+        os.chdir(REPO_DIR)
+
+        # Validate and prepare input
+        input_path = os.path.join(INPUT_DIR, input_filename)
+        if not os.path.exists(input_path):
+            raise FileNotFoundError(f"Input image not found: {input_path}")
+
+        # Copy input to media/images/
+        media_input_path = os.path.join(REPO_DIR, "media", "images", input_filename)
+        os.makedirs(os.path.join(REPO_DIR, "media", "images"), exist_ok=True)
+        shutil.copy2(input_path, media_input_path)
+
+        # Create args object for adaptive training
+        args = argparse.Namespace()
+        args.input_path = f"images/{input_filename}"
+        args.num_gaussians = config.adaptive_config.base_gaussians
+        args.max_steps = max_steps
+        args.device = "cuda:0"
+        args.quantize = True
+        args.disable_prog_optim = not config.use_progressive
+        args.evaluate = False
+        args.gamma = 1.0
+        args.pos_bits = 16
+        args.scale_bits = 16
+        args.rot_bits = 16
+        args.feat_bits = 16
+        args.data_root = "media"
+
+        # Run adaptive training
+        result = train_adaptive(
+            args,
+            config.adaptive_config,
+            workspace_dir=ROOT_WORKSPACE,
+            session_name=session_name
+        )
+
+        # Extract folder name from output_dir
+        # output_dir format: workspace/output/session_N/image-adaptive-gaussians
+        output_dir_parts = result['output_dir'].split(os.sep)
+        # Find the part after session_name
+        try:
+            session_idx = output_dir_parts.index(session_name)
+            output_folder = output_dir_parts[session_idx + 1]
+        except (ValueError, IndexError):
+            # Fallback: use last part of path
+            output_folder = os.path.basename(result['output_dir'])
+
+        # Store as session_name/folder_name
+        full_output_ref = f"{session_name}/{output_folder}"
+        output_folders.append(full_output_ref)
+
+        print(f"\n📁 Output: {full_output_ref}")
+        print()
+
+    print("=" * 80)
+    print("✅ ALL ADAPTIVE TRAINING COMPLETE")
     print("=" * 80)
     print(f"Session:    {session_name}")
     print(f"Total runs: {total_combinations}")

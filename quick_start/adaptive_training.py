@@ -16,9 +16,22 @@ from pathlib import Path
 from typing import Dict, List
 import numpy as np
 
+# Safe matplotlib configuration (no LaTeX dependencies)
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.rcParams['text.usetex'] = False  # Disable LaTeX
+matplotlib.rcParams['font.family'] = 'DejaVu Sans'
+matplotlib.rcParams['mathtext.fontset'] = 'dejavusans'
+import matplotlib.pyplot as plt
+
 from model import GaussianSplatting2D
 from quick_start.config import AdaptiveRefinementConfig
 from quick_start.patch_manager import PatchManager, PatchInfo
+from quick_start.adaptive_visualization import (
+    view_adaptive_results,
+    create_enhanced_comparison_image,
+    create_flip_error_map
+)
 from utils.image_utils import save_image
 from utils.patch_utils import calculate_patch_error
 
@@ -196,8 +209,12 @@ def train_adaptive(
         before_metrics = calculate_patch_error(base_patch, gt_patch,
                                                adaptive_config.psnr_weight,
                                                adaptive_config.ssim_weight, args.gamma)
-        before_error_map = torch.abs(base_patch - gt_patch).mean(dim=0, keepdim=True)
-        save_image(before_error_map.repeat(3, 1, 1), str(patch_output_dir / "error_before.jpg"), gamma=1.0)
+        # Use FLIP error map for better perceptual error visualization
+        before_error_map = create_flip_error_map(base_patch, gt_patch, args.gamma)
+        # Convert to RGB for visualization
+        before_error_rgb = plt.cm.magma(before_error_map / 0.2)[:, :, :3]  # Normalize to 0-0.2 range
+        before_error_tensor = torch.from_numpy(before_error_rgb).permute(2, 0, 1).float()
+        save_image(before_error_tensor, str(patch_output_dir / "error_before.jpg"), gamma=1.0)
 
         # Iterative refinement
         current_gaussians = adaptive_config.base_gaussians
@@ -283,9 +300,12 @@ def train_adaptive(
         refined_patches_dict[patch_idx] = best_patch
         save_image(best_patch, str(patch_output_dir / "after.jpg"), gamma=args.gamma)
 
-        # Save after error map
-        after_error_map = torch.abs(best_patch - gt_patch).mean(dim=0, keepdim=True)
-        save_image(after_error_map.repeat(3, 1, 1), str(patch_output_dir / "error_after.jpg"), gamma=1.0)
+        # Save after error map using FLIP
+        after_error_map = create_flip_error_map(best_patch, gt_patch, args.gamma)
+        # Convert to RGB for visualization
+        after_error_rgb = plt.cm.magma(after_error_map / 0.2)[:, :, :3]  # Normalize to 0-0.2 range
+        after_error_tensor = torch.from_numpy(after_error_rgb).permute(2, 0, 1).float()
+        save_image(after_error_tensor, str(patch_output_dir / "error_after.jpg"), gamma=1.0)
 
         # Save patch metrics
         patch_metrics = {
@@ -324,14 +344,7 @@ def train_adaptive(
     print("PHASE 5: Comparison and Summary")
     print("-"*80)
 
-    # Create 3-image comparison
-    print("Creating comparison visualization...")
-    comparison_image = create_comparison_image(gt_images, base_rendered, enhanced_image)
-    comparison_path = comparison_dir / "comparison.jpg"
-    save_image(comparison_image, str(comparison_path), gamma=args.gamma)
-    print(f"Comparison image saved to {comparison_path}")
-
-    # Calculate final statistics
+    # Calculate final statistics first (needed for visualizations)
     from utils.image_utils import get_psnr
     from utils.ssim import fused_ssim
 
@@ -346,33 +359,80 @@ def train_adaptive(
     enhanced_psnr = get_psnr(enhanced_corrected, gt_corrected).item()
     enhanced_ssim = fused_ssim(enhanced_corrected.unsqueeze(0), gt_corrected.unsqueeze(0)).item()
 
+    # Create 3-image comparison (simple concatenation for backward compatibility)
+    print("Creating simple comparison image...")
+    comparison_image = create_comparison_image(gt_images, base_rendered, enhanced_image)
+    comparison_path = comparison_dir / "comparison.jpg"
+    save_image(comparison_image, str(comparison_path), gamma=args.gamma)
+    print(f"Comparison image saved to {comparison_path}")
+
+    # Create enhanced comparison with matplotlib (with error maps)
+    print("Creating enhanced comparison visualization...")
+    try:
+        comparison_fig = create_enhanced_comparison_image(
+            gt_images, base_rendered, enhanced_image,
+            base_psnr, base_ssim, enhanced_psnr, enhanced_ssim,
+            gamma=args.gamma
+        )
+        comparison_enhanced_path = comparison_dir / "comparison_detailed.png"
+        comparison_fig.savefig(str(comparison_enhanced_path), dpi=150, bbox_inches='tight')
+        plt.close(comparison_fig)
+        print(f"Enhanced comparison saved to {comparison_enhanced_path}")
+    except Exception as e:
+        print(f"Warning: Could not create enhanced comparison: {e}")
+
     # Save patch summary
     patch_manager.save_summary(str(enhanced_dir / "patch_summary.json"))
 
-    # Print summary
-    print("\n" + "="*80)
-    print("SUMMARY")
-    print("="*80)
-    print(f"\nBase Model:")
-    print(f"  PSNR: {base_psnr:.2f} dB")
-    print(f"  SSIM: {base_ssim:.4f}")
-    print(f"  Gaussians: {adaptive_config.base_gaussians}")
-
-    print(f"\nEnhanced Model:")
-    print(f"  PSNR: {enhanced_psnr:.2f} dB (+{enhanced_psnr - base_psnr:.2f})")
-    print(f"  SSIM: {enhanced_ssim:.4f} (+{enhanced_ssim - base_ssim:.4f})")
-
-    print(f"\nRefinement Statistics:")
-    print(f"  Patches refined: {len(patches_to_refine)}")
-    print(f"  Patches meeting threshold: {patches_successfully_refined}")
-    print(f"  Total refinement time: {total_refinement_time:.2f}s")
-
+    # Get patch statistics
     stats = patch_manager.get_statistics()
-    print(f"  Total gaussians used: {stats['total_gaussians']}")
-    print(f"  Avg gaussians per patch: {stats['mean_gaussians_per_patch']:.0f}")
 
-    print(f"\nOutput directory: {output_dir}")
-    print("="*80 + "\n")
+    # Create comprehensive summary visualization
+    print("Creating comprehensive summary visualization...")
+    try:
+        view_adaptive_results(
+            gt_image=gt_images,
+            base_image=base_rendered,
+            enhanced_image=enhanced_image,
+            patch_grid_viz=patch_viz,
+            base_psnr=base_psnr,
+            base_ssim=base_ssim,
+            enhanced_psnr=enhanced_psnr,
+            enhanced_ssim=enhanced_ssim,
+            patch_stats=stats,
+            training_time=total_refinement_time,
+            base_gaussians=adaptive_config.base_gaussians,
+            output_dir=str(output_dir),
+            gamma=args.gamma
+        )
+    except Exception as e:
+        print(f"Warning: Could not create summary visualization: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # Print summary manually
+        print("\n" + "="*80)
+        print("SUMMARY")
+        print("="*80)
+        print(f"\nBase Model:")
+        print(f"  PSNR: {base_psnr:.2f} dB")
+        print(f"  SSIM: {base_ssim:.4f}")
+        print(f"  Gaussians: {adaptive_config.base_gaussians}")
+
+        print(f"\nEnhanced Model:")
+        print(f"  PSNR: {enhanced_psnr:.2f} dB (+{enhanced_psnr - base_psnr:.2f})")
+        print(f"  SSIM: {enhanced_ssim:.4f} (+{enhanced_ssim - base_ssim:.4f})")
+
+        print(f"\nRefinement Statistics:")
+        print(f"  Patches refined: {len(patches_to_refine)}")
+        print(f"  Patches meeting threshold: {patches_successfully_refined}")
+        print(f"  Total refinement time: {total_refinement_time:.2f}s")
+
+        print(f"  Total gaussians used: {stats['total_gaussians']}")
+        print(f"  Avg gaussians per patch: {stats['mean_gaussians_per_patch']:.0f}")
+
+        print(f"\nOutput directory: {output_dir}")
+        print("="*80 + "\n")
 
     return {
         'output_dir': str(output_dir),

@@ -60,7 +60,13 @@ class GaussianSplatting2D(nn.Module):
         self.use_amp = getattr(args, 'use_amp', False)  # Automatic Mixed Precision
         self.use_gradient_checkpointing = getattr(args, 'use_gradient_checkpointing', False)
         if not self.evaluate and self.use_amp:
-            self.scaler = GradScaler()
+            # Use new GradScaler API (torch 2.0+)
+            try:
+                from torch.amp import GradScaler as NewGradScaler
+                self.scaler = NewGradScaler('cuda')
+            except ImportError:
+                # Fallback to old API for older PyTorch versions
+                self.scaler = GradScaler()
             self.worklog.info(f"Mixed precision training enabled (FP16)")
         # Initialization
         if self.evaluate:
@@ -88,9 +94,7 @@ class GaussianSplatting2D(nn.Module):
         self.video_iterations = getattr(args, 'video_iterations', 50)
         self.video_save_to_disk = getattr(args, 'video_save_to_disk', True)  # Save to disk by default
         if self.video_save_to_disk:
-            self.temp_video_dir = os.path.join(self.log_dir, "temp_video_frames")
-            if not self.evaluate and self.make_training_video:
-                os.makedirs(self.temp_video_dir, exist_ok=True)
+            self.temp_video_dir = None  # Will be set when log_dir is finalized
             self.video_frame_paths = []  # Store paths instead of frames
         else:
             self.video_frames = []  # Store frames in memory (legacy mode)
@@ -553,6 +557,10 @@ class GaussianSplatting2D(nn.Module):
                 psnr, ssim = get_psnr(images, torch.pow(self.gt_images, 1.0/self.gamma)).item(), \
                              fused_ssim(images.unsqueeze(0), torch.pow(self.gt_images, 1.0/self.gamma).unsqueeze(0)).item()
                 if self.video_save_to_disk:
+                    # Create temp video directory now that log_dir is finalized
+                    if self.temp_video_dir is None:
+                        self.temp_video_dir = os.path.join(self.log_dir, "temp_video_frames")
+                        os.makedirs(self.temp_video_dir, exist_ok=True)
                     frame_path = os.path.join(self.temp_video_dir, f"frame_{0:06d}.jpg")
                     self._save_video_frame_to_disk(images, psnr, ssim, 0, frame_path)
                     self.video_frame_paths.append(frame_path)
@@ -620,6 +628,10 @@ class GaussianSplatting2D(nn.Module):
                         images = self._render_images(upsample=False)
                         images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
                         if self.video_save_to_disk:
+                            # Ensure temp video directory exists
+                            if self.temp_video_dir is None:
+                                self.temp_video_dir = os.path.join(self.log_dir, "temp_video_frames")
+                                os.makedirs(self.temp_video_dir, exist_ok=True)
                             frame_path = os.path.join(self.temp_video_dir, f"frame_{self.step:06d}.jpg")
                             self._save_video_frame_to_disk(images, self.psnr_curr, self.ssim_curr, self.step, frame_path)
                             self.video_frame_paths.append(frame_path)

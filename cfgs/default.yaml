@@ -22,6 +22,10 @@ eval_steps:            100
 # Video generation
 make_training_video:   False # Generate training progress video
 video_iterations:      50 # Capture frame every N iterations for video
+video_save_to_disk:    True # Save video frames to disk (saves memory, recommended for 8K+)
+# Memory optimization
+use_amp:               True # Enable automatic mixed precision (FP16) for memory savings
+use_gradient_checkpointing: False # Enable gradient checkpointing (slower but saves memory)
 # Target images
 gamma:                 1.0 # Optimize in a gamma-corrected space, modify with caution
 data_root:             "media"

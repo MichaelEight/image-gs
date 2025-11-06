@@ -82,6 +82,9 @@ class TrainingConfig:
         make_training_video: Generate video showing training progression (default: False)
         video_iterations: Capture frame every N iterations for video (default: 50)
         eval_steps: Evaluate metrics every N iterations (default: 100)
+        use_amp: Enable automatic mixed precision (FP16) for memory savings (default: True)
+        use_gradient_checkpointing: Enable gradient checkpointing (slower but saves memory) (default: False)
+        video_save_to_disk: Save video frames to disk instead of memory (default: True)
     """
     input_filenames: List[str]
     gaussians: List[int]
@@ -93,6 +96,9 @@ class TrainingConfig:
     make_training_video: bool = False
     video_iterations: int = 50
     eval_steps: int = 100
+    use_amp: bool = True
+    use_gradient_checkpointing: bool = False
+    video_save_to_disk: bool = True
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -138,6 +144,10 @@ def set_config(
     make_training_video: bool = False,
     video_iterations: int = 50,
     eval_steps: int = 100,
+    # Memory optimization parameters
+    use_amp: bool = True,
+    use_gradient_checkpointing: bool = False,
+    video_save_to_disk: bool = True,
     # Adaptive refinement parameters
     adaptive_refinement: bool = False,
     adaptive_patch_size: int = 256,
@@ -171,6 +181,12 @@ def set_config(
         video_iterations: Capture frame every N iterations (default: 50)
         eval_steps: Evaluate metrics every N iterations (default: 100)
                    Note: Set eval_steps = video_iterations for smoother videos
+
+        # Memory Optimization Parameters
+        use_amp: Enable automatic mixed precision (FP16) for memory savings (default: True)
+        use_gradient_checkpointing: Enable gradient checkpointing, slower but saves memory (default: False)
+        video_save_to_disk: Save video frames to disk instead of memory (default: True)
+                           Recommended for 8K+ images to avoid memory issues
 
         # Adaptive Refinement Parameters (opt-in)
         adaptive_refinement: Enable adaptive patch-based refinement (default: False)
@@ -249,5 +265,8 @@ def set_config(
         adaptive_config=adaptive_config,
         make_training_video=make_training_video,
         video_iterations=video_iterations,
-        eval_steps=eval_steps
+        eval_steps=eval_steps,
+        use_amp=use_amp,
+        use_gradient_checkpointing=use_gradient_checkpointing,
+        video_save_to_disk=video_save_to_disk
     )

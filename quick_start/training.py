@@ -108,7 +108,10 @@ def _build_training_command(
     allow_partial: bool = False,
     make_training_video: bool = False,
     video_iterations: int = 50,
-    eval_steps: int = 100
+    eval_steps: int = 100,
+    use_amp: bool = True,
+    use_gradient_checkpointing: bool = False,
+    video_save_to_disk: bool = True
 ) -> str:
     """
     Build the training command string.
@@ -124,6 +127,9 @@ def _build_training_command(
         make_training_video: Generate training video
         video_iterations: Capture frame every N iterations
         eval_steps: Evaluate metrics every N iterations
+        use_amp: Enable automatic mixed precision (FP16)
+        use_gradient_checkpointing: Enable gradient checkpointing
+        video_save_to_disk: Save video frames to disk
 
     Returns:
         Command string to execute
@@ -142,6 +148,15 @@ def _build_training_command(
     video_flags = ""
     if make_training_video:
         video_flags = f"--make_training_video --video_iterations={video_iterations}"
+        if video_save_to_disk:
+            video_flags += " --video_save_to_disk"
+
+    # Add memory optimization flags
+    memory_flags = ""
+    if use_amp:
+        memory_flags += " --use_amp"
+    if use_gradient_checkpointing:
+        memory_flags += " --use_gradient_checkpointing"
 
     cmd = f"""
     {sys.executable} main.py \
@@ -154,6 +169,7 @@ def _build_training_command(
       {prog_flag} \
       {init_flags} \
       {video_flags} \
+      {memory_flags} \
       --device="cuda:0"
     """
 
@@ -280,7 +296,10 @@ def train_single(
     allow_partial: bool = False,
     make_training_video: bool = False,
     video_iterations: int = 50,
-    eval_steps: int = 100
+    eval_steps: int = 100,
+    use_amp: bool = True,
+    use_gradient_checkpointing: bool = False,
+    video_save_to_disk: bool = True
 ) -> str:
     """
     Train a single Image-GS model.
@@ -296,6 +315,9 @@ def train_single(
         make_training_video: Generate training video
         video_iterations: Capture frame every N iterations
         eval_steps: Evaluate metrics every N iterations
+        use_amp: Enable automatic mixed precision (FP16)
+        use_gradient_checkpointing: Enable gradient checkpointing
+        video_save_to_disk: Save video frames to disk
 
     Returns:
         Output folder name (e.g., "cat-5000-3500")
@@ -305,7 +327,8 @@ def train_single(
     )
     cmd = _build_training_command(
         input_filename, output_folder, num_gaussians, max_steps, use_progressive,
-        init_checkpoint_path, allow_partial, make_training_video, video_iterations, eval_steps
+        init_checkpoint_path, allow_partial, make_training_video, video_iterations, eval_steps,
+        use_amp, use_gradient_checkpointing, video_save_to_disk
     )
     _run_training(
         cmd, input_filename, num_gaussians, max_steps, use_progressive, output_folder,
@@ -407,7 +430,10 @@ def _train_standard_batch(config: TrainingConfig) -> List[str]:
             allow_partial=config.allow_partial,
             make_training_video=config.make_training_video,
             video_iterations=config.video_iterations,
-            eval_steps=config.eval_steps
+            eval_steps=config.eval_steps,
+            use_amp=config.use_amp,
+            use_gradient_checkpointing=config.use_gradient_checkpointing,
+            video_save_to_disk=config.video_save_to_disk
         )
 
         # Store as session_name/folder_name for easy reference
@@ -517,6 +543,11 @@ def _train_adaptive_batch(config: TrainingConfig) -> List[str]:
         # Video generation settings
         args.make_training_video = config.make_training_video
         args.video_iterations = config.video_iterations
+        args.video_save_to_disk = config.video_save_to_disk
+
+        # Memory optimization settings
+        args.use_amp = config.use_amp
+        args.use_gradient_checkpointing = config.use_gradient_checkpointing
 
         # Target images
         args.gamma = 1.0

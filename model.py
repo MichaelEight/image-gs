@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 from fused_ssim import fused_ssim
 from lpips import LPIPS
 from pytorch_msssim import MS_SSIM
@@ -55,6 +56,12 @@ class GaussianSplatting2D(nn.Module):
         self._init_gaussians(args)
         self._init_loss(args)
         self._init_optimization(args)
+        # Memory optimization settings
+        self.use_amp = getattr(args, 'use_amp', False)  # Automatic Mixed Precision
+        self.use_gradient_checkpointing = getattr(args, 'use_gradient_checkpointing', False)
+        if not self.evaluate and self.use_amp:
+            self.scaler = GradScaler()
+            self.worklog.info(f"Mixed precision training enabled (FP16)")
         # Initialization
         if self.evaluate:
             self.ckpt_file = args.ckpt_file
@@ -79,7 +86,14 @@ class GaussianSplatting2D(nn.Module):
         # Video generation settings
         self.make_training_video = getattr(args, 'make_training_video', False)
         self.video_iterations = getattr(args, 'video_iterations', 50)
-        self.video_frames = []  # Store frames for video generation
+        self.video_save_to_disk = getattr(args, 'video_save_to_disk', True)  # Save to disk by default
+        if self.video_save_to_disk:
+            self.temp_video_dir = os.path.join(self.log_dir, "temp_video_frames")
+            if not self.evaluate and self.make_training_video:
+                os.makedirs(self.temp_video_dir, exist_ok=True)
+            self.video_frame_paths = []  # Store paths instead of frames
+        else:
+            self.video_frames = []  # Store frames in memory (legacy mode)
         if not self.evaluate:
             clean_dir(path=self.log_dir)
             os.makedirs(self.log_dir, exist_ok=False)
@@ -538,23 +552,48 @@ class GaussianSplatting2D(nn.Module):
                 images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
                 psnr, ssim = get_psnr(images, torch.pow(self.gt_images, 1.0/self.gamma)).item(), \
                              fused_ssim(images.unsqueeze(0), torch.pow(self.gt_images, 1.0/self.gamma).unsqueeze(0)).item()
-                self.video_frames.append({
-                    'render': images.clone(),
-                    'step': 0,
-                    'psnr': psnr,
-                    'ssim': ssim
-                })
+                if self.video_save_to_disk:
+                    frame_path = os.path.join(self.temp_video_dir, f"frame_{0:06d}.jpg")
+                    self._save_video_frame_to_disk(images, psnr, ssim, 0, frame_path)
+                    self.video_frame_paths.append(frame_path)
+                else:
+                    self.video_frames.append({
+                        'render': images.clone(),
+                        'step': 0,
+                        'psnr': psnr,
+                        'ssim': ssim
+                    })
         for step in range(self.start_step, self.max_steps+1):
             self.step = step
             self.optimizer.zero_grad()
-            # Rendering
-            images, render_time = self.forward(self.img_h, self.img_w, self.tile_bounds)
-            self.render_time_accum += render_time
-            # Optimization
+            # Rendering with optional AMP and gradient checkpointing
             begin = perf_counter()
-            self._get_total_loss(images)
-            self.total_loss.backward()
-            self.optimizer.step()
+            if self.use_gradient_checkpointing:
+                from torch.utils.checkpoint import checkpoint
+                # Gradient checkpointing for memory savings
+                with autocast(enabled=self.use_amp):
+                    images, render_time = checkpoint(
+                        lambda: self.forward(self.img_h, self.img_w, self.tile_bounds),
+                        use_reentrant=False
+                    )
+            else:
+                # Standard forward pass with optional AMP
+                with autocast(enabled=self.use_amp):
+                    images, render_time = self.forward(self.img_h, self.img_w, self.tile_bounds)
+
+            self.render_time_accum += render_time
+            # Optimization with AMP-aware backward pass
+            with autocast(enabled=self.use_amp):
+                self._get_total_loss(images)
+
+            if self.use_amp:
+                self.scaler.scale(self.total_loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                self.total_loss.backward()
+                self.optimizer.step()
+
             self.total_time_accum += (perf_counter() - begin + render_time)
             # Logging
             terminate = False
@@ -580,12 +619,17 @@ class GaussianSplatting2D(nn.Module):
                     if self.make_training_video and self.step % self.video_iterations == 0:
                         images = self._render_images(upsample=False)
                         images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
-                        self.video_frames.append({
-                            'render': images.clone(),
-                            'step': self.step,
-                            'psnr': self.psnr_curr,
-                            'ssim': self.ssim_curr
-                        })
+                        if self.video_save_to_disk:
+                            frame_path = os.path.join(self.temp_video_dir, f"frame_{self.step:06d}.jpg")
+                            self._save_video_frame_to_disk(images, self.psnr_curr, self.ssim_curr, self.step, frame_path)
+                            self.video_frame_paths.append(frame_path)
+                        else:
+                            self.video_frames.append({
+                                'render': images.clone(),
+                                'step': self.step,
+                                'psnr': self.psnr_curr,
+                                'ssim': self.ssim_curr
+                            })
                     if not self.disable_lr_schedule and self.num_gaussians == self.total_num_gaussians:
                         terminate = self._lr_schedule()
                 if self.step % self.save_image_steps == 0:
@@ -606,21 +650,30 @@ class GaussianSplatting2D(nn.Module):
                 images = self._render_images(upsample=False)
                 images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
                 # Only add if this step wasn't already captured
-                if len(self.video_frames) == 0 or self.video_frames[-1]['step'] != self.step:
-                    self.video_frames.append({
-                        'render': images.clone(),
-                        'step': self.step,
-                        'psnr': psnr,
-                        'ssim': ssim
-                    })
+                if self.video_save_to_disk:
+                    if len(self.video_frame_paths) == 0 or not self.video_frame_paths[-1].endswith(f"frame_{self.step:06d}.jpg"):
+                        frame_path = os.path.join(self.temp_video_dir, f"frame_{self.step:06d}.jpg")
+                        self._save_video_frame_to_disk(images, psnr, ssim, self.step, frame_path)
+                        self.video_frame_paths.append(frame_path)
+                else:
+                    if len(self.video_frames) == 0 or self.video_frames[-1]['step'] != self.step:
+                        self.video_frames.append({
+                            'render': images.clone(),
+                            'step': self.step,
+                            'psnr': psnr,
+                            'ssim': ssim
+                        })
 
         # Close CSV file
         self.metrics_csv_file.close()
         self.worklog.info(f"Metrics saved to: {self.metrics_csv_path}")
 
         # Generate training video if enabled
-        if self.make_training_video and len(self.video_frames) > 0:
-            self._generate_training_video()
+        if self.make_training_video:
+            if self.video_save_to_disk and len(self.video_frame_paths) > 0:
+                self._generate_training_video_from_disk()
+            elif not self.video_save_to_disk and len(self.video_frames) > 0:
+                self._generate_training_video()
 
         self.worklog.info("Optimization completed")
         self.worklog.info("***********************************************")
@@ -711,6 +764,133 @@ class GaussianSplatting2D(nn.Module):
         else:
             images, _ = self.forward(self.img_h, self.img_w, self.tile_bounds)
         return images
+
+    def _save_video_frame_to_disk(self, images, psnr, ssim, step, path):
+        """
+        Save a single video frame to disk to avoid memory accumulation.
+
+        Args:
+            images: Rendered image tensor (C, H, W)
+            psnr: PSNR metric for this frame
+            ssim: SSIM metric for this frame
+            step: Training step number
+            path: File path to save the frame
+        """
+        import cv2
+        import json
+
+        # Convert tensor to numpy
+        img_np = images.detach().cpu().permute(1, 2, 0).numpy()
+        img_np = np.clip(img_np, 0, 1)
+
+        # Convert to uint8
+        if img_np.shape[2] == 1:
+            # Grayscale
+            img_uint8 = (img_np * 255).astype(np.uint8)
+            img_uint8 = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2BGR)
+        else:
+            # RGB - convert to BGR for OpenCV
+            img_uint8 = (img_np * 255).astype(np.uint8)
+            img_uint8 = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR)
+
+        # Save image
+        cv2.imwrite(path, img_uint8, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+        # Save metadata separately
+        meta_path = path.replace('.jpg', '.json')
+        with open(meta_path, 'w') as f:
+            json.dump({'step': step, 'psnr': float(psnr), 'ssim': float(ssim)}, f)
+
+    def _generate_training_video_from_disk(self):
+        """
+        Generate training video by loading frames from disk.
+        This avoids keeping all frames in GPU memory during training.
+        """
+        import cv2
+        import json
+        import shutil
+
+        self.worklog.info(f"Generating training video from {len(self.video_frame_paths)} frames on disk...")
+
+        # Video output path
+        video_path = os.path.join(self.log_dir, "training_video.mp4")
+
+        # Video parameters
+        fps = 30
+
+        # Read first frame to get dimensions
+        first_frame = cv2.imread(self.video_frame_paths[0])
+        h, w = first_frame.shape[:2]
+
+        # Side-by-side width (ground truth + rendered)
+        frame_width = w * 2
+        frame_height = h
+
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+
+        # Get ground truth image
+        gt_np = self.gt_images.detach().cpu().permute(1, 2, 0).numpy()
+        gt_np = np.clip(gt_np ** (1.0 / self.gamma), 0, 1)
+
+        # Convert ground truth to uint8
+        if gt_np.shape[2] == 1:
+            gt_uint8 = (gt_np * 255).astype(np.uint8)
+            gt_uint8 = cv2.cvtColor(gt_uint8, cv2.COLOR_GRAY2BGR)
+        else:
+            gt_uint8 = (gt_np * 255).astype(np.uint8)
+            gt_uint8 = cv2.cvtColor(gt_uint8, cv2.COLOR_RGB2BGR)
+
+        # Process each frame from disk
+        for frame_path in self.video_frame_paths:
+            # Load frame
+            render_uint8 = cv2.imread(frame_path)
+
+            # Load metadata
+            meta_path = frame_path.replace('.jpg', '.json')
+            with open(meta_path, 'r') as f:
+                meta = json.load(f)
+
+            step = meta['step']
+            psnr = meta['psnr']
+            ssim = meta['ssim']
+
+            # Create side-by-side frame
+            side_by_side = np.hstack([gt_uint8, render_uint8])
+
+            # Add text overlay with metrics
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            thickness = 2
+            color = (255, 255, 255)  # White text
+
+            # Add labels
+            cv2.putText(side_by_side, "Ground Truth", (10, 30), font, font_scale, color, thickness)
+            cv2.putText(side_by_side, "Rendered", (w + 10, 30), font, font_scale, color, thickness)
+
+            # Add metrics on the right side
+            metrics_y = h - 70
+            cv2.putText(side_by_side, f"Step: {step}", (w + 10, metrics_y), font, font_scale, color, thickness)
+            cv2.putText(side_by_side, f"PSNR: {psnr:.2f} dB", (w + 10, metrics_y + 25), font, font_scale, color, thickness)
+            cv2.putText(side_by_side, f"SSIM: {ssim:.4f}", (w + 10, metrics_y + 50), font, font_scale, color, thickness)
+
+            # Write frame to video
+            video.write(side_by_side)
+
+        # Release video writer
+        video.release()
+
+        self.worklog.info(f"Training video saved to: {video_path}")
+        self.worklog.info(f"Video contains {len(self.video_frame_paths)} frames at {fps} FPS ({len(self.video_frame_paths)/fps:.2f} seconds)")
+
+        # Clean up temporary frame files
+        self.worklog.info(f"Cleaning up temporary video frames...")
+        try:
+            shutil.rmtree(self.temp_video_dir)
+            self.worklog.info(f"Temporary frames deleted")
+        except Exception as e:
+            self.worklog.warning(f"Could not delete temporary frames: {e}")
 
     def _generate_training_video(self):
         """

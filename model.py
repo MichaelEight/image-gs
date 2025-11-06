@@ -911,7 +911,7 @@ class GaussianSplatting2D(nn.Module):
             self.step = step
 
             # Forward pass
-            images, _ = self.forward()
+            images, _ = self.forward(self.img_h, self.img_w, self.tile_bounds)
 
             # Calculate loss
             self._get_total_loss(images)

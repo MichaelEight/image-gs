@@ -472,19 +472,73 @@ def _train_adaptive_batch(config: TrainingConfig) -> List[str]:
 
         # Create args object for adaptive training
         args = argparse.Namespace()
+
+        # Image and training settings
         args.input_path = f"images/{input_filename}"
         args.num_gaussians = config.adaptive_config.base_gaussians
         args.max_steps = max_steps
         args.device = "cuda:0"
-        args.quantize = True
-        args.disable_prog_optim = not config.use_progressive
-        args.evaluate = False
+        args.data_root = "media"
+
+        # Evaluation and logging (set by adaptive_training.py)
+        args.eval = False
+        args.seed = 123
+        args.log_dir = None  # Will be set by adaptive_training.py
+        args.log_level = "INFO"
+        args.save_image_format = "jpg"
+        args.save_plot_format = "jpg"
+        args.vis_gaussians = False
+        args.save_image_steps = 100000
+        args.save_ckpt_steps = 100000
+        args.eval_steps = 100
+
+        # Target images
         args.gamma = 1.0
+        args.downsample = False
+        args.downsample_ratio = 2.0
+
+        # Bit precision
+        args.quantize = True
         args.pos_bits = 16
         args.scale_bits = 16
         args.rot_bits = 16
         args.feat_bits = 16
-        args.data_root = "media"
+
+        # Gaussians
+        args.disable_prog_optim = not config.use_progressive
+        args.initial_ratio = 0.5
+        args.add_steps = 500
+        args.add_times = 4
+        args.post_min_steps = 3000
+        args.topk = 10
+        args.disable_topk_norm = False
+        args.disable_inverse_scale = False
+        args.init_scale = 5.0
+        args.disable_color_init = False
+        args.init_mode = "gradient"
+        args.init_random_ratio = 0.3
+        args.smap_filter_size = 20
+        args.init_from_checkpoint = config.init_gaussian_file is not None
+        args.init_checkpoint_path = config.init_gaussian_file or ""
+        args.init_partial = config.allow_partial
+        args.ckpt_file = ""
+        args.disable_tiles = False
+
+        # Loss functions
+        args.l1_loss_ratio = 1.0
+        args.l2_loss_ratio = 0.0
+        args.ssim_loss_ratio = 0.1
+
+        # Optimization
+        args.pos_lr = 5.0e-4
+        args.scale_lr = 2.0e-3
+        args.rot_lr = 2.0e-3
+        args.feat_lr = 5.0e-3
+        args.disable_lr_schedule = False
+        args.decay_ratio = 10.0
+        args.check_decay_steps = 1000
+        args.max_decay_times = 1
+        args.decay_threshold = 1.0e-3
 
         # Run adaptive training
         result = train_adaptive(

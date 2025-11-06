@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import numpy as np
 from typing import List, Tuple, Dict
 from .image_utils import get_psnr
-from .ssim import fused_ssim
+from fused_ssim import fused_ssim
 
 
 def split_into_patches(
@@ -64,7 +64,15 @@ def split_into_patches(
             if patch.shape[1] < patch_size or patch.shape[2] < patch_size:
                 pad_h = patch_size - patch.shape[1]
                 pad_w = patch_size - patch.shape[2]
-                patch = F.pad(patch, (0, pad_w, 0, pad_h), mode='reflect')
+
+                # Choose padding mode based on patch size
+                # Reflect padding requires padding size < input dimension
+                # Use replicate if patch is too small for reflect
+                if pad_h < patch.shape[1] and pad_w < patch.shape[2]:
+                    patch = F.pad(patch, (0, pad_w, 0, pad_h), mode='reflect')
+                else:
+                    # For very small patches, use replicate padding
+                    patch = F.pad(patch, (0, pad_w, 0, pad_h), mode='replicate')
 
             patches.append(patch.to(device))
             coordinates.append((x_start, y_start, x_end, y_end))

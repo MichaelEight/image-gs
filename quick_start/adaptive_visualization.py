@@ -35,8 +35,8 @@ def create_flip_error_map(image: torch.Tensor, gt_image: torch.Tensor, gamma: fl
         import flip_evaluator
 
         # Convert to numpy and apply gamma correction
-        img_np = torch.pow(torch.clamp(image, 0.0, 1.0), 1.0 / gamma).cpu().numpy()
-        gt_np = torch.pow(torch.clamp(gt_image, 0.0, 1.0), 1.0 / gamma).cpu().numpy()
+        img_np = torch.pow(torch.clamp(image, 0.0, 1.0), 1.0 / gamma).detach().cpu().numpy()
+        gt_np = torch.pow(torch.clamp(gt_image, 0.0, 1.0), 1.0 / gamma).detach().cpu().numpy()
 
         # Transpose to HWC format for FLIP
         if img_np.shape[0] in [1, 3]:
@@ -56,7 +56,7 @@ def create_flip_error_map(image: torch.Tensor, gt_image: torch.Tensor, gamma: fl
     except (ImportError, Exception):
         # Fallback to simple L1 difference if FLIP not available
         diff = torch.abs(image - gt_image).mean(dim=0)
-        return diff.cpu().numpy()
+        return diff.detach().cpu().numpy()
 
 
 def create_simple_error_map(image: torch.Tensor, gt_image: torch.Tensor) -> np.ndarray:
@@ -71,7 +71,7 @@ def create_simple_error_map(image: torch.Tensor, gt_image: torch.Tensor) -> np.n
         Error map as numpy array (H, W)
     """
     diff = torch.abs(image - gt_image).mean(dim=0)
-    return diff.cpu().numpy()
+    return diff.detach().cpu().numpy()
 
 
 def _tensor_to_numpy(tensor: torch.Tensor, gamma: float = 2.2) -> np.ndarray:
@@ -87,7 +87,7 @@ def _tensor_to_numpy(tensor: torch.Tensor, gamma: float = 2.2) -> np.ndarray:
     """
     # Apply gamma correction
     img = torch.pow(torch.clamp(tensor, 0.0, 1.0), 1.0 / gamma)
-    img_np = img.cpu().numpy()
+    img_np = img.detach().cpu().numpy()
 
     # Handle grayscale
     if img_np.shape[0] == 1:

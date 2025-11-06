@@ -9,6 +9,7 @@ This module orchestrates the complete adaptive refinement process:
 """
 
 import os
+import shutil
 import torch
 import json
 import time
@@ -33,6 +34,7 @@ from quick_start.adaptive_visualization import (
     create_flip_error_map
 )
 from utils.image_utils import save_image
+from utils.misc_utils import get_latest_ckpt_step
 from utils.patch_utils import calculate_patch_error
 
 
@@ -91,17 +93,24 @@ def train_adaptive(
     # Create and train base model
     base_model = GaussianSplatting2D(args)
 
-    if not args.evaluate:
+    if not args.eval:
         print(f"Training base model with {adaptive_config.base_gaussians} gaussians...")
         start_time = time.time()
         base_model.optimize()
         base_training_time = time.time() - start_time
         print(f"Base training complete in {base_training_time:.2f}s")
 
-        # Save base model
+        # Copy base model checkpoint
+        # The checkpoint is automatically saved during optimize() in ckpt_dir
         base_model_path = base_dir / "model.pt"
-        base_model.save(str(base_model_path))
-        print(f"Base model saved to {base_model_path}")
+        ckpt_dir = Path(base_model.ckpt_dir)
+        latest_step = get_latest_ckpt_step(str(ckpt_dir))
+        if latest_step > 0:
+            src_ckpt = ckpt_dir / f"ckpt_step-{latest_step}.pt"
+            shutil.copy2(src_ckpt, base_model_path)
+            print(f"Base model checkpoint copied to {base_model_path}")
+        else:
+            print("Warning: No checkpoint found to copy")
 
     # Render base image
     print("Rendering base image...")
@@ -249,7 +258,7 @@ def train_adaptive(
 
             patch_args.num_gaussians = current_gaussians
             patch_args.log_dir = str(patch_output_dir / f"logs_iter{iteration}")
-            patch_args.evaluate = False
+            patch_args.eval = False
             os.makedirs(patch_args.log_dir, exist_ok=True)
 
             # Train patch
@@ -404,7 +413,7 @@ def train_adaptive(
 
     # Calculate final statistics first (needed for visualizations)
     from utils.image_utils import get_psnr
-    from utils.ssim import fused_ssim
+    from fused_ssim import fused_ssim
 
     # Gamma correction for metrics
     gt_corrected = torch.pow(torch.clamp(gt_images, 0.0, 1.0), 1.0 / args.gamma)

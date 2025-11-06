@@ -105,7 +105,9 @@ def _build_training_command(
     max_steps: int,
     use_progressive: bool,
     init_checkpoint_path: Optional[str] = None,
-    allow_partial: bool = False
+    allow_partial: bool = False,
+    make_training_video: bool = False,
+    video_iterations: int = 50
 ) -> str:
     """
     Build the training command string.
@@ -118,6 +120,8 @@ def _build_training_command(
         use_progressive: Enable progressive optimization
         init_checkpoint_path: Path to initial checkpoint
         allow_partial: Allow partial initialization
+        make_training_video: Generate training video
+        video_iterations: Capture frame every N iterations
 
     Returns:
         Command string to execute
@@ -132,6 +136,11 @@ def _build_training_command(
         if allow_partial:
             init_flags += " --init_partial"
 
+    # Add video generation flags if enabled
+    video_flags = ""
+    if make_training_video:
+        video_flags = f"--make_training_video --video_iterations={video_iterations}"
+
     cmd = f"""
     {sys.executable} main.py \
       --input_path="images/{input_filename}" \
@@ -141,6 +150,7 @@ def _build_training_command(
       --quantize \
       {prog_flag} \
       {init_flags} \
+      {video_flags} \
       --device="cuda:0"
     """
 
@@ -264,7 +274,9 @@ def train_single(
     max_steps: int,
     use_progressive: bool = True,
     init_gaussian_file: Optional[str] = None,
-    allow_partial: bool = False
+    allow_partial: bool = False,
+    make_training_video: bool = False,
+    video_iterations: int = 50
 ) -> str:
     """
     Train a single Image-GS model.
@@ -277,6 +289,8 @@ def train_single(
         use_progressive: Enable progressive optimization
         init_gaussian_file: Path to initial Gaussian file relative to repo root
         allow_partial: Allow partial initialization
+        make_training_video: Generate training video
+        video_iterations: Capture frame every N iterations
 
     Returns:
         Output folder name (e.g., "cat-5000-3500")
@@ -286,7 +300,7 @@ def train_single(
     )
     cmd = _build_training_command(
         input_filename, output_folder, num_gaussians, max_steps, use_progressive,
-        init_checkpoint_path, allow_partial
+        init_checkpoint_path, allow_partial, make_training_video, video_iterations
     )
     _run_training(
         cmd, input_filename, num_gaussians, max_steps, use_progressive, output_folder,
@@ -385,7 +399,9 @@ def _train_standard_batch(config: TrainingConfig) -> List[str]:
             max_steps=max_steps,
             use_progressive=config.use_progressive,
             init_gaussian_file=config.init_gaussian_file,
-            allow_partial=config.allow_partial
+            allow_partial=config.allow_partial,
+            make_training_video=config.make_training_video,
+            video_iterations=config.video_iterations
         )
 
         # Store as session_name/folder_name for easy reference
@@ -491,6 +507,10 @@ def _train_adaptive_batch(config: TrainingConfig) -> List[str]:
         args.save_image_steps = 100000
         args.save_ckpt_steps = 100000
         args.eval_steps = 100
+
+        # Video generation settings
+        args.make_training_video = config.make_training_video
+        args.video_iterations = config.video_iterations
 
         # Target images
         args.gamma = 1.0

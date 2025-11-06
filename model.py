@@ -76,6 +76,10 @@ class GaussianSplatting2D(nn.Module):
         self.save_image_steps = args.save_image_steps
         self.save_ckpt_steps = args.save_ckpt_steps
         self.eval_steps = args.eval_steps
+        # Video generation settings
+        self.make_training_video = getattr(args, 'make_training_video', False)
+        self.video_iterations = getattr(args, 'video_iterations', 50)
+        self.video_frames = []  # Store frames for video generation
         if not self.evaluate:
             clean_dir(path=self.log_dir)
             os.makedirs(self.log_dir, exist_ok=False)
@@ -528,6 +532,18 @@ class GaussianSplatting2D(nn.Module):
         self.step = 0
         with torch.no_grad():
             self._log_images(log_final=False, plot_gaussians=self.vis_gaussians)
+            # Capture initial frame for video if enabled
+            if self.make_training_video:
+                images = self._render_images(upsample=False)
+                images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
+                psnr, ssim = get_psnr(images, torch.pow(self.gt_images, 1.0/self.gamma)).item(), \
+                             fused_ssim(images.unsqueeze(0), torch.pow(self.gt_images, 1.0/self.gamma).unsqueeze(0)).item()
+                self.video_frames.append({
+                    'render': images.clone(),
+                    'step': 0,
+                    'psnr': psnr,
+                    'ssim': ssim
+                })
         for step in range(self.start_step, self.max_steps+1):
             self.step = step
             self.optimizer.zero_grad()
@@ -560,6 +576,16 @@ class GaussianSplatting2D(nn.Module):
                         self.total_time_accum
                     ])
                     self.metrics_csv_file.flush()
+                    # Capture frame for video if enabled
+                    if self.make_training_video and self.step % self.video_iterations == 0:
+                        images = self._render_images(upsample=False)
+                        images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
+                        self.video_frames.append({
+                            'render': images.clone(),
+                            'step': self.step,
+                            'psnr': self.psnr_curr,
+                            'ssim': self.ssim_curr
+                        })
                     if not self.disable_lr_schedule and self.num_gaussians == self.total_num_gaussians:
                         terminate = self._lr_schedule()
                 if self.step % self.save_image_steps == 0:
@@ -573,10 +599,28 @@ class GaussianSplatting2D(nn.Module):
         with torch.no_grad():
             self._log_images(log_final=True, plot_gaussians=self.vis_gaussians)
             self._save_model()
+            # Capture final frame for video if enabled
+            if self.make_training_video:
+                # Evaluate to get final metrics
+                psnr, ssim = self._evaluate(log=False, upsample=False)
+                images = self._render_images(upsample=False)
+                images = torch.pow(torch.clamp(images, 0.0, 1.0), 1.0/self.gamma)
+                # Only add if this step wasn't already captured
+                if len(self.video_frames) == 0 or self.video_frames[-1]['step'] != self.step:
+                    self.video_frames.append({
+                        'render': images.clone(),
+                        'step': self.step,
+                        'psnr': psnr,
+                        'ssim': ssim
+                    })
 
         # Close CSV file
         self.metrics_csv_file.close()
         self.worklog.info(f"Metrics saved to: {self.metrics_csv_path}")
+
+        # Generate training video if enabled
+        if self.make_training_video and len(self.video_frames) > 0:
+            self._generate_training_video()
 
         self.worklog.info("Optimization completed")
         self.worklog.info("***********************************************")
@@ -667,6 +711,101 @@ class GaussianSplatting2D(nn.Module):
         else:
             images, _ = self.forward(self.img_h, self.img_w, self.tile_bounds)
         return images
+
+    def _generate_training_video(self):
+        """
+        Generate a training progress video from captured frames.
+        Creates a side-by-side comparison video with ground truth on the left
+        and rendered image on the right, with metrics overlay.
+        """
+        import cv2
+
+        self.worklog.info(f"Generating training video from {len(self.video_frames)} frames...")
+
+        # Video output path
+        video_path = os.path.join(self.log_dir, "training_video.mp4")
+
+        # Video parameters
+        fps = 30
+
+        # Get dimensions from first frame
+        first_frame_data = self.video_frames[0]
+        render_tensor = first_frame_data['render']
+
+        # Convert tensor to numpy array (H, W, C) and scale to 0-255
+        render_np = render_tensor.detach().cpu().permute(1, 2, 0).numpy()
+        h, w = render_np.shape[:2]
+
+        # Side-by-side width (ground truth + rendered)
+        frame_width = w * 2
+        frame_height = h
+
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video = cv2.VideoWriter(video_path, fourcc, fps, (frame_width, frame_height))
+
+        # Get ground truth image
+        gt_np = self.gt_images.detach().cpu().permute(1, 2, 0).numpy()
+        gt_np = np.clip(gt_np ** (1.0 / self.gamma), 0, 1)
+
+        # Convert ground truth to uint8
+        if gt_np.shape[2] == 1:
+            # Grayscale
+            gt_uint8 = (gt_np * 255).astype(np.uint8)
+            gt_uint8 = cv2.cvtColor(gt_uint8, cv2.COLOR_GRAY2BGR)
+        else:
+            # RGB - convert to BGR for OpenCV
+            gt_uint8 = (gt_np * 255).astype(np.uint8)
+            gt_uint8 = cv2.cvtColor(gt_uint8, cv2.COLOR_RGB2BGR)
+
+        # Process each frame
+        for frame_data in self.video_frames:
+            render_tensor = frame_data['render']
+            step = frame_data['step']
+            psnr = frame_data['psnr']
+            ssim = frame_data['ssim']
+
+            # Convert rendered image to numpy
+            render_np = render_tensor.detach().cpu().permute(1, 2, 0).numpy()
+            render_np = np.clip(render_np ** (1.0 / self.gamma), 0, 1)
+
+            # Convert to uint8
+            if render_np.shape[2] == 1:
+                # Grayscale
+                render_uint8 = (render_np * 255).astype(np.uint8)
+                render_uint8 = cv2.cvtColor(render_uint8, cv2.COLOR_GRAY2BGR)
+            else:
+                # RGB - convert to BGR for OpenCV
+                render_uint8 = (render_np * 255).astype(np.uint8)
+                render_uint8 = cv2.cvtColor(render_uint8, cv2.COLOR_RGB2BGR)
+
+            # Create side-by-side frame
+            side_by_side = np.hstack([gt_uint8, render_uint8])
+
+            # Add text overlay with metrics
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            thickness = 2
+            color = (255, 255, 255)  # White text
+
+            # Add labels
+            cv2.putText(side_by_side, "Ground Truth", (10, 30), font, font_scale, color, thickness)
+            cv2.putText(side_by_side, "Rendered", (w + 10, 30), font, font_scale, color, thickness)
+
+            # Add metrics on the right side
+            metrics_y = h - 70
+            cv2.putText(side_by_side, f"Step: {step}", (w + 10, metrics_y), font, font_scale, color, thickness)
+            cv2.putText(side_by_side, f"PSNR: {psnr:.2f} dB", (w + 10, metrics_y + 25), font, font_scale, color, thickness)
+            cv2.putText(side_by_side, f"SSIM: {ssim:.4f}", (w + 10, metrics_y + 50), font, font_scale, color, thickness)
+
+            # Write frame to video
+            video.write(side_by_side)
+
+        # Release video writer
+        video.release()
+
+        self.worklog.info(f"Training video saved to: {video_path}")
+        self.worklog.info(f"Video contains {len(self.video_frames)} frames at {fps} FPS ({len(self.video_frames)/fps:.2f} seconds)")
 
     def _lr_schedule(self):
         if (self.psnr_curr <= self.best_psnr + 100*self.decay_threshold or self.ssim_curr <= self.best_ssim + self.decay_threshold):

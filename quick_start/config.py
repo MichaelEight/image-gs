@@ -79,6 +79,8 @@ class TrainingConfig:
                            (e.g., "output/session_1/cat-5000-3500/model.pt"). None for random init.
         allow_partial: Allow partial initialization if Gaussian counts don't match
         adaptive_config: Optional adaptive refinement configuration. None for standard training.
+        make_training_video: Generate video showing training progression (default: False)
+        video_iterations: Capture frame every N iterations for video (default: 50)
     """
     input_filenames: List[str]
     gaussians: List[int]
@@ -87,6 +89,8 @@ class TrainingConfig:
     init_gaussian_file: Optional[str] = None
     allow_partial: bool = False
     adaptive_config: Optional[AdaptiveRefinementConfig] = None
+    make_training_video: bool = False
+    video_iterations: int = 50
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -114,6 +118,9 @@ class TrainingConfig:
         if self.init_gaussian_file is not None and not self.init_gaussian_file.endswith('.pt'):
             raise ValueError(f"init_gaussian_file must be a .pt file: {self.init_gaussian_file}")
 
+        if self.video_iterations <= 0:
+            raise ValueError(f"video_iterations must be positive: {self.video_iterations}")
+
 
 def set_config(
     input_filenames: Union[str, List[str]],
@@ -122,6 +129,9 @@ def set_config(
     use_progressive: bool = True,
     init_gaussian_file: Optional[str] = None,
     allow_partial: bool = False,
+    # Video generation parameters
+    make_training_video: bool = False,
+    video_iterations: int = 50,
     # Adaptive refinement parameters
     adaptive_refinement: bool = False,
     adaptive_patch_size: int = 256,
@@ -149,6 +159,10 @@ def set_config(
         init_gaussian_file: Path to initial Gaussian checkpoint relative to repo root.
                            None for random initialization (default: None)
         allow_partial: Allow partial initialization if counts don't match (default: False)
+
+        # Video Generation Parameters (opt-in)
+        make_training_video: Generate training progress video (default: False)
+        video_iterations: Capture frame every N iterations (default: 50)
 
         # Adaptive Refinement Parameters (opt-in)
         adaptive_refinement: Enable adaptive patch-based refinement (default: False)
@@ -224,5 +238,7 @@ def set_config(
         use_progressive=use_progressive,
         init_gaussian_file=init_gaussian_file,
         allow_partial=allow_partial,
-        adaptive_config=adaptive_config
+        adaptive_config=adaptive_config,
+        make_training_video=make_training_video,
+        video_iterations=video_iterations
     )

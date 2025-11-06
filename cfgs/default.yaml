@@ -19,6 +19,9 @@ vis_gaussians:         False # Visualize Gaussians during optimization
 save_image_steps:      100000 # Frequency of rendering intermediate results during optimization
 save_ckpt_steps:       100000 # Frequency of checkpointing during optimization
 eval_steps:            100
+# Video generation
+make_training_video:   False # Generate training progress video
+video_iterations:      50 # Capture frame every N iterations for video
 # Target images
 gamma:                 1.0 # Optimize in a gamma-corrected space, modify with caution
 data_root:             "media"

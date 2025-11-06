@@ -26,7 +26,8 @@ config = set_config(
     gaussians=[1000],
     steps=[2000],
     make_training_video=True,    # Enable video generation
-    video_iterations=50          # Capture frame every 50 iterations
+    video_iterations=50,         # Capture frame every 50 iterations
+    eval_steps=50                # Evaluate every 50 steps (match video_iterations!)
 )
 ```
 
@@ -42,6 +43,13 @@ config = set_config(
   - Higher values = fewer frames = choppier video but smaller file size
   - Recommended values: 25-100 depending on total training steps
 
+- **`eval_steps`** (int, default: `100`):
+  - Number of training iterations between metric evaluations (PSNR, SSIM)
+  - **IMPORTANT**: Frames can only be captured during evaluation steps
+  - **Best Practice**: Set `eval_steps = video_iterations` for optimal video smoothness
+  - Lower values = more frequent evaluation = slightly slower training but smoother videos
+  - Higher values = less frequent evaluation = faster training but choppier videos
+
 ### Example Configurations
 
 #### High Detail (Many Frames)
@@ -51,7 +59,8 @@ config = set_config(
     gaussians=[5000],
     steps=[10000],
     make_training_video=True,
-    video_iterations=25  # Capture every 25 steps = ~400 frames
+    video_iterations=25,  # Capture every 25 steps = ~400 frames
+    eval_steps=25         # Match video_iterations for smooth video
 )
 ```
 
@@ -62,7 +71,8 @@ config = set_config(
     gaussians=[5000],
     steps=[10000],
     make_training_video=True,
-    video_iterations=50  # Capture every 50 steps = ~200 frames
+    video_iterations=50,  # Capture every 50 steps = ~200 frames
+    eval_steps=50         # Match video_iterations for smooth video
 )
 ```
 
@@ -73,7 +83,8 @@ config = set_config(
     gaussians=[5000],
     steps=[10000],
     make_training_video=True,
-    video_iterations=100  # Capture every 100 steps = ~100 frames
+    video_iterations=100,  # Capture every 100 steps = ~100 frames
+    eval_steps=100         # Match video_iterations for smooth video
 )
 ```
 
@@ -160,10 +171,13 @@ After training completes, the `_generate_training_video()` method (model.py:679-
 
 ### Training Speed Impact
 
-- Minimal impact on training speed
-- Frame capture happens during evaluation (already scheduled)
-- Video generation occurs after training completes
-- Recommended: Keep `video_iterations >= eval_steps` to avoid redundant renders
+- **Evaluation frequency**: Setting lower `eval_steps` increases evaluation frequency
+- More evaluations = more PSNR/SSIM calculations = slightly slower training
+- Frame capture itself has minimal overhead (happens during evaluation)
+- Video generation occurs after training completes (no impact on training speed)
+- **Recommendation**: Balance between video smoothness and training speed
+  - For fast training: `eval_steps=100` (default)
+  - For smooth videos: `eval_steps=video_iterations`
 
 ### File Size Estimates
 
@@ -179,7 +193,15 @@ For a 512×512 image:
 1. **Check if feature is enabled**: `make_training_video=True`
 2. **Verify OpenCV is installed**: `pip install opencv-python`
 3. **Check training completed**: Video generates after training finishes
-4. **Look for error messages**: Check training logs for video generation errors
+4. **Check eval_steps**: Frames can only be captured at evaluation steps
+5. **Look for error messages**: Check training logs for video generation errors
+
+### Video Has Fewer Frames Than Expected
+
+- **Problem**: Set `video_iterations=50` but video only has frames every 100 iterations
+- **Cause**: `eval_steps` is larger than `video_iterations`
+- **Solution**: Set `eval_steps = video_iterations` or lower
+- **Example**: If `video_iterations=50`, set `eval_steps=50` (not 100)
 
 ### Video Quality Issues
 
@@ -205,7 +227,8 @@ config = set_config(
     gaussians=[5000],
     steps=[3500],
     make_training_video=True,
-    video_iterations=50
+    video_iterations=50,
+    eval_steps=50  # Match video_iterations!
 )
 
 results = train(config)
@@ -220,7 +243,8 @@ config = set_config(
     gaussians=[1000, 5000],
     steps=[2000],
     make_training_video=True,
-    video_iterations=50
+    video_iterations=50,
+    eval_steps=50  # Match video_iterations!
 )
 
 results = train(config)
@@ -240,6 +264,7 @@ config = set_config(
     steps=[5000],
     make_training_video=True,
     video_iterations=100,
+    eval_steps=100,  # Match video_iterations!
     adaptive_refinement=True,
     adaptive_error_threshold=0.3
 )

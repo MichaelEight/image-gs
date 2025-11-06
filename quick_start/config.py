@@ -81,6 +81,7 @@ class TrainingConfig:
         adaptive_config: Optional adaptive refinement configuration. None for standard training.
         make_training_video: Generate video showing training progression (default: False)
         video_iterations: Capture frame every N iterations for video (default: 50)
+        eval_steps: Evaluate metrics every N iterations (default: 100)
     """
     input_filenames: List[str]
     gaussians: List[int]
@@ -91,6 +92,7 @@ class TrainingConfig:
     adaptive_config: Optional[AdaptiveRefinementConfig] = None
     make_training_video: bool = False
     video_iterations: int = 50
+    eval_steps: int = 100
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -121,6 +123,9 @@ class TrainingConfig:
         if self.video_iterations <= 0:
             raise ValueError(f"video_iterations must be positive: {self.video_iterations}")
 
+        if self.eval_steps <= 0:
+            raise ValueError(f"eval_steps must be positive: {self.eval_steps}")
+
 
 def set_config(
     input_filenames: Union[str, List[str]],
@@ -132,6 +137,7 @@ def set_config(
     # Video generation parameters
     make_training_video: bool = False,
     video_iterations: int = 50,
+    eval_steps: int = 100,
     # Adaptive refinement parameters
     adaptive_refinement: bool = False,
     adaptive_patch_size: int = 256,
@@ -163,6 +169,8 @@ def set_config(
         # Video Generation Parameters (opt-in)
         make_training_video: Generate training progress video (default: False)
         video_iterations: Capture frame every N iterations (default: 50)
+        eval_steps: Evaluate metrics every N iterations (default: 100)
+                   Note: Set eval_steps = video_iterations for smoother videos
 
         # Adaptive Refinement Parameters (opt-in)
         adaptive_refinement: Enable adaptive patch-based refinement (default: False)
@@ -240,5 +248,6 @@ def set_config(
         allow_partial=allow_partial,
         adaptive_config=adaptive_config,
         make_training_video=make_training_video,
-        video_iterations=video_iterations
+        video_iterations=video_iterations,
+        eval_steps=eval_steps
     )

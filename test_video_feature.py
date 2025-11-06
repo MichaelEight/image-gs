@@ -69,7 +69,7 @@ print("\n" + "=" * 80)
 print("TEST 4: Testing validation")
 print("=" * 80)
 try:
-    # This should raise an error for invalid video_iterations
+    # Test 4a: Invalid video_iterations
     try:
         invalid_config = set_config(
             input_filenames="test.png",
@@ -80,14 +80,48 @@ try:
         print("✗ Validation failed: Should have rejected negative video_iterations")
         sys.exit(1)
     except ValueError as e:
-        print(f"✓ Validation works: {e}")
+        print(f"✓ Validation works for video_iterations: {e}")
+
+    # Test 4b: Invalid eval_steps
+    try:
+        invalid_config = set_config(
+            input_filenames="test.png",
+            gaussians=[1000],
+            steps=[100],
+            eval_steps=0  # Invalid
+        )
+        print("✗ Validation failed: Should have rejected zero eval_steps")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"✓ Validation works for eval_steps: {e}")
 except Exception as e:
     print(f"✗ Unexpected error during validation test: {e}")
     sys.exit(1)
 
-# Test 5: Check if model.py has the video attributes
+# Test 5: Test eval_steps parameter
 print("\n" + "=" * 80)
-print("TEST 5: Checking model.py integration")
+print("TEST 5: Testing eval_steps parameter")
+print("=" * 80)
+try:
+    config_eval = set_config(
+        input_filenames="test.png",
+        gaussians=[1000],
+        steps=[100],
+        eval_steps=25
+    )
+    print(f"✓ Config with custom eval_steps created")
+    print(f"  - eval_steps: {config_eval.eval_steps}")
+
+    # Verify the value
+    assert config_eval.eval_steps == 25, "eval_steps should be 25"
+    print("✓ Custom eval_steps value is correct")
+except Exception as e:
+    print(f"✗ Failed with custom eval_steps: {e}")
+    sys.exit(1)
+
+# Test 6: Check if model.py has the video attributes
+print("\n" + "=" * 80)
+print("TEST 6: Checking model.py integration")
 print("=" * 80)
 try:
     # Read model.py to verify video attributes exist
@@ -111,9 +145,9 @@ except Exception as e:
     print(f"✗ Failed to check model.py: {e}")
     sys.exit(1)
 
-# Test 6: Check if default.yaml has the video parameters
+# Test 7: Check if default.yaml has the video parameters
 print("\n" + "=" * 80)
-print("TEST 6: Checking default.yaml configuration")
+print("TEST 7: Checking default.yaml configuration")
 print("=" * 80)
 try:
     with open("cfgs/default.yaml", "r") as f:
@@ -142,5 +176,7 @@ print("\nThe video generation feature has been successfully integrated.")
 print("\nTo use it, set the following parameters in your training config:")
 print("  - make_training_video=True    # Enable video generation")
 print("  - video_iterations=50         # Capture frame every 50 iterations")
-print("\nThe training video will be saved as 'training_video.mp4' in the output folder.")
+print("  - eval_steps=50               # Evaluate every 50 steps (match video_iterations!)")
+print("\nIMPORTANT: Set eval_steps = video_iterations for smoother videos!")
+print("The training video will be saved as 'training_video.mp4' in the output folder.")
 print("=" * 80)
